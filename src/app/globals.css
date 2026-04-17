@@ -1,0 +1,180 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+@import "tailwindcss";
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   PRIMARY: #3f1052  (Deep Violet / Enterprise Purple)
+   Palette:
+     primary           #3f1052   base
+     primary-hover     #521469   +15% lightness
+     primary-active    #2d0b3b   -10% lightness
+     primary-light     #f5eef8   tinted bg (light mode)
+     primary-dark      #1a0526   deep shade (dark mode accents)
+   Contrast: white text on primary passes WCAG AA (ratio > 4.5:1)
+───────────────────────────────────────────────────────────────────────────── */
+
+:root {
+  --background: #fafafa;
+  --foreground: #0f172a;
+  --card: #ffffff;
+  --card-foreground: #0f172a;
+  --popover: #ffffff;
+  --popover-foreground: #0f172a;
+
+  /* ✅ PRIMARY — replaced orange #f97316 → violet #3f1052 */
+  --primary: #3f1052;
+  --primary-hover: #521469;
+  --primary-active: #2d0b3b;
+  --primary-foreground: #ffffff;
+  --primary-light: #f5eef8;
+
+  --secondary: #f1f5f9;
+  --secondary-foreground: #0f172a;
+  --muted: #f1f5f9;
+  --muted-foreground: #64748b;
+  --accent: #f3eef6;
+  --accent-foreground: #3f1052;
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+  --success: #22c55e;
+  --success-foreground: #ffffff;
+  --warning: #eab308;
+  --warning-foreground: #0f172a;
+  --border: #e2e8f0;
+  --input: #e2e8f0;
+  --ring: #3f1052;
+  --radius: 0.625rem;
+  --sidebar-width: 260px;
+  --sidebar-collapsed-width: 72px;
+}
+
+.dark {
+  --background: #0d0a10;
+  --foreground: #f4f0f6;
+  --card: #1a1020;
+  --card-foreground: #f4f0f6;
+  --popover: #1a1020;
+  --popover-foreground: #f4f0f6;
+
+  /* ✅ PRIMARY dark mode — slightly brighter for contrast on dark bg */
+  --primary: #7c3aad;
+  --primary-hover: #9333ea;
+  --primary-active: #6b21a8;
+  --primary-foreground: #ffffff;
+  --primary-light: #2d1040;
+
+  --secondary: #231530;
+  --secondary-foreground: #f4f0f6;
+  --muted: #231530;
+  --muted-foreground: #a78bba;
+  --accent: #2d1a40;
+  --accent-foreground: #e0c8f0;
+  --destructive: #dc2626;
+  --destructive-foreground: #ffffff;
+  --success: #16a34a;
+  --success-foreground: #ffffff;
+  --warning: #ca8a04;
+  --warning-foreground: #ffffff;
+  --border: #3b2050;
+  --input: #3b2050;
+  --ring: #7c3aad;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-active: var(--primary-active);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-light: var(--primary-light);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --font-sans: 'Inter', system-ui, sans-serif;
+}
+
+* {
+  border-color: var(--border);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--muted-foreground);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--primary);
+}
+
+/* ─── Animations ────────────────────────────────────────────────────────────── */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(16px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* ✅ Updated pulse-glow to use CSS variables for light/dark mode colors */
+@keyframes pulse-glow {
+  0%,  100% { box-shadow: 0 0 0 0   color-mix(in srgb, var(--primary) 45%, transparent); }
+  50%        { box-shadow: 0 0 0 8px color-mix(in srgb, var(--primary) 0%, transparent); }
+}
+
+.animate-fade-in       { animation: fadeIn 0.4s ease-out forwards; }
+.animate-slide-in-right{ animation: slideInRight 0.3s ease-out forwards; }
+.animate-pulse-glow    { animation: pulse-glow 2s infinite; }
+
+/* Glass */
+.glass {
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.dark .glass {
+  background: rgba(63, 16, 82, 0.08);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(124, 58, 173, 0.12);
+}
