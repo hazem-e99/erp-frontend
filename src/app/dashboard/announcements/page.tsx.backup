@@ -4,14 +4,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { PageLoader, EmptyState } from "@/components/ui/loading";
 import { useAuthStore } from "@/lib/store";
 import api from "@/lib/api";
-import MyReminders from "@/components/reminders/MyReminders";
 import {
   Megaphone, Plus, X, Loader2, Send, Users, Shield, Building2,
-  FolderKanban, Globe, ChevronDown, BarChart3, Eye, Check, Bell,
+  FolderKanban, Globe, ChevronDown, BarChart3, Eye, Check,
 } from "lucide-react";
 
 const targetTypeLabels: Record<string, { label: string; icon: any; color: string }> = {
@@ -26,7 +24,6 @@ export default function AnnouncementsPage() {
   const { hasPermission } = useAuthStore();
   const canSend = hasPermission("announcements:send");
 
-  const [activeTab, setActiveTab] = useState("announcements");
   const [announcements, setAnnouncements] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -95,33 +92,15 @@ export default function AnnouncementsPage() {
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold flex items-center gap-2">
-          <Megaphone className="w-6 h-6 text-primary" /> Announcements & Reminders
-        </h1>
-        <p className="text-sm text-muted-foreground mt-1">Send announcements and manage personal reminders</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold flex items-center gap-2"><Megaphone className="w-6 h-6 text-primary" /> Announcements</h1>
+          <p className="text-sm text-muted-foreground mt-1">Send messages and notifications to your team</p>
+        </div>
+        <Button onClick={() => { resetForm(); setShowForm(true); }} className="gap-1">
+          <Plus className="w-4 h-4" /> New Announcement
+        </Button>
       </div>
-
-      {/* Tabs */}
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList>
-          <TabsTrigger value="announcements">
-            <Megaphone className="w-4 h-4 mr-2" />
-            Team Announcements
-          </TabsTrigger>
-          <TabsTrigger value="reminders">
-            <Bell className="w-4 h-4 mr-2" />
-            My Reminders
-          </TabsTrigger>
-        </TabsList>
-
-        {/* Announcements Tab */}
-        <TabsContent value="announcements" className="space-y-6">
-          <div className="flex items-center justify-end">
-            <Button onClick={() => { resetForm(); setShowForm(true); }} className="gap-1">
-              <Plus className="w-4 h-4" /> New Announcement
-            </Button>
-          </div>
 
       {/* Create Form */}
       {showForm && (
@@ -139,7 +118,7 @@ export default function AnnouncementsPage() {
               <div>
                 <label className="text-xs text-muted-foreground mb-1 block">Message *</label>
                 <textarea
-                  className="w-full min-h-25 rounded-lg border border-input bg-card px-3 py-2.5 text-sm resize-y focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  className="w-full min-h-[100px] rounded-lg border border-input bg-card px-3 py-2.5 text-sm resize-y focus:outline-none focus:ring-2 focus:ring-primary/20"
                   placeholder="Write your announcement..."
                   value={message}
                   onChange={(e) => setMessage(e.target.value)}
@@ -174,7 +153,7 @@ export default function AnnouncementsPage() {
                     Select {targetType === "users" ? "Users" : targetType === "roles" ? "Roles" : targetType === "departments" ? "Departments" : "Projects"}
                     {targetIds.length > 0 && <span className="ml-1 text-primary">({targetIds.length} selected)</span>}
                   </label>
-                  <div className="max-h-50 overflow-y-auto rounded-lg border border-input p-2 space-y-1">
+                  <div className="max-h-[200px] overflow-y-auto rounded-lg border border-input p-2 space-y-1">
                     {targetType === "users" && users.map(u => (
                       <label key={u._id} className={`flex items-center gap-2 p-2 rounded-lg cursor-pointer transition-colors ${targetIds.includes(u._id) ? 'bg-primary/10' : 'hover:bg-accent'}`}>
                         <input type="checkbox" checked={targetIds.includes(u._id)} onChange={() => toggleId(u._id)} className="accent-primary" />
@@ -253,7 +232,7 @@ export default function AnnouncementsPage() {
                       {/* Read rate bar */}
                       <div className="mt-2 h-1.5 bg-accent rounded-full overflow-hidden">
                         <div
-                          className="h-full bg-linear-to-r from-primary to-success rounded-full transition-all duration-500"
+                          className="h-full bg-gradient-to-r from-primary to-success rounded-full transition-all duration-500"
                           style={{ width: `${readRate}%` }}
                         />
                       </div>
@@ -265,13 +244,6 @@ export default function AnnouncementsPage() {
           })}
         </div>
       )}
-        </TabsContent>
-
-        {/* Reminders Tab */}
-        <TabsContent value="reminders">
-          <MyReminders />
-        </TabsContent>
-      </Tabs>
     </div>
   );
 }

@@ -1,14 +1,26 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
+import { z } from "zod";
 import api from "@/lib/api";
+import { toast$, financeToast } from "@/lib/toast";
+import { paymentAmountSchema, roundCents, parseFinancialInput } from "@/lib/finance-validation";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { PageLoader } from "@/components/ui/loading";
 import * as Dialog from "@radix-ui/react-dialog";
-import { Plus, X } from "lucide-react";
+import { Plus, X, FileDown } from "lucide-react";
 import { Payment, Installment, METHOD_LABELS, fmtCurrency, fmtDate } from "./finance.types";
+import { FilterBar } from "@/components/finance/FilterBar";
+import { exportToExcel, fmtExcelCurrency, fmtExcelDate } from "@/lib/excel-export";
+
+const paymentSchema = z.object({
+  installmentId: z.string().min(1, "Please select an installment"),
+  amount: paymentAmountSchema,
+  paymentDate: z.string().min(1, "Payment date is required"),
+  method: z.enum(["cash", "bank_transfer", "credit_card", "cheque", "online"]),
+});
 
 const METHODS = ["cash", "bank_transfer", "credit_card", "cheque", "online"];
 
@@ -18,6 +30,7 @@ export default function PaymentsTab() {
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [clients, setClients] = useState<any[]>([]);
   const [clientInstallments, setClientInstallments] = useState<Installment[]>([]);
   const [loadingInstallments, setLoadingInstallments] = useState(false);
@@ -48,6 +61,8 @@ export default function PaymentsTab() {
     reference: "",
     notes: "",
   };
+
+  const [filters, setFilters] = useState<Record<string, any>>({});
 
   const fetch = async () => {
     setLoading(true);
@@ -115,19 +130,89 @@ export default function PaymentsTab() {
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    const parsedAmount = parseFinancialInput(form.amount);
+    const parsed = paymentSchema.safeParse({
+      ...form,
+      amount: isNaN(parsedAmount) ? undefined : parsedAmount,
+    });
+    if (!parsed.success) {
+      const errs: Record<string, string> = {};
+      parsed.error.issues.forEach((issue) => { errs[issue.path[0] as string] = issue.message; });
+      setFieldErrors(errs);
+      return;
+    }
+    setFieldErrors({});
+
     setSaving(true);
     try {
-      await api.post("/finance/payments", { ...form, amount: parseFloat(form.amount) });
+      const res = await api.post("/finance/payments", {
+        ...form,
+        amount: roundCents(parsedAmount),
+      });
+      const overflow: number = res.data?.overflow ?? 0;
       setOpen(false);
       setForm({ ...emptyForm });
       setSelectedClientId("");
       setClientInstallments([]);
       fetch();
+      financeToast.paymentRecorded(roundCents(parsedAmount), overflow);
     } catch (e: any) {
-      const msg = e.response?.data?.errors?.join("\n") ?? e.response?.data?.message ?? "Failed to record payment";
-      alert(msg);
+      toast$.apiError(e);
     }
     setSaving(false);
+  };
+
+  // Filter payments based on active filters
+  const filteredPayments = useMemo(() => {
+    return payments.filter((payment) => {
+      // Customer name filter
+      if (filters.customer && !payment.clientName.toLowerCase().includes(filters.customer.toLowerCase())) {
+        return false;
+      }
+
+      // Method filter
+      if (filters.method && payment.method !== filters.method) {
+        return false;
+      }
+
+      // Date range filter
+      if (filters.dateFrom && new Date(payment.paymentDate) < new Date(filters.dateFrom)) {
+        return false;
+      }
+      if (filters.dateTo && new Date(payment.paymentDate) > new Date(filters.dateTo)) {
+        return false;
+      }
+
+      // Amount range filter
+      if (filters.amountMin && payment.amount < parseFloat(filters.amountMin)) {
+        return false;
+      }
+      if (filters.amountMax && payment.amount > parseFloat(filters.amountMax)) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [payments, filters]);
+
+  // Export to Excel function
+  const handleExport = async () => {
+    await exportToExcel({
+      filename: 'Payments_Report',
+      sheetName: 'Payments',
+      title: 'Payments Report',
+      columns: [
+        { header: 'Customer', key: 'clientName', width: 20 },
+        { header: 'Amount', key: 'amount', width: 15, format: fmtExcelCurrency },
+        { header: 'Payment Date', key: 'paymentDate', width: 15, format: fmtExcelDate },
+        { header: 'Method', key: 'method', width: 15, format: (v) => METHOD_LABELS[v] || v },
+        { header: 'Reference', key: 'reference', width: 20, format: (v) => v || '—' },
+        { header: 'Overpayment', key: 'overpaymentAmount', width: 15, format: fmtExcelCurrency },
+        { header: 'Notes', key: 'notes', width: 30, format: (v) => v || '—' },
+      ],
+      data: filteredPayments,
+    });
   };
 
   if (loading) return <PageLoader />;
@@ -136,9 +221,45 @@ export default function PaymentsTab() {
 
   return (
     <div className="space-y-4">
+      {/* Filter Bar */}
+      <FilterBar
+        fields={[
+          { key: 'customer', label: 'Customer', type: 'text', placeholder: 'Search by name...' },
+          {
+            key: 'method',
+            label: 'Payment Method',
+            type: 'select',
+            options: [
+              { label: 'Cash', value: 'cash' },
+              { label: 'Bank Transfer', value: 'bank_transfer' },
+              { label: 'Credit Card', value: 'credit_card' },
+              { label: 'Cheque', value: 'cheque' },
+              { label: 'Online', value: 'online' },
+            ],
+          },
+          { key: 'date', label: 'Payment Date', type: 'dateRange' },
+          { key: 'amountMin', label: 'Min Amount', type: 'number', placeholder: 'Min amount...' },
+          { key: 'amountMax', label: 'Max Amount', type: 'number', placeholder: 'Max amount...' },
+        ]}
+        onFilterChange={setFilters}
+        onClear={() => setFilters({})}
+      />
+
       <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">{total} total payments</p>
-        <Dialog.Root
+        <p className="text-sm text-muted-foreground">
+          {filteredPayments.length} {filteredPayments.length === total ? 'total' : `of ${total}`} payments
+        </p>
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleExport}
+            disabled={filteredPayments.length === 0}
+          >
+            <FileDown className="w-4 h-4 mr-1" />
+            Export to Excel
+          </Button>
+          <Dialog.Root
           open={open}
           onOpenChange={(o) => {
             setOpen(o);
@@ -238,26 +359,53 @@ export default function PaymentsTab() {
                 )}
 
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Amount ($)</label>
+                  <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                    Amount ($)
+                    {selectedInstallment && (
+                      <span className="ml-2 text-[10px] text-primary font-normal">(Auto-filled from installment)</span>
+                    )}
+                  </label>
                   <Input
                     type="number"
                     min="0.01"
                     step="0.01"
                     value={form.amount}
-                    required
-                    onChange={(e) => setField("amount", e.target.value)}
-                    placeholder="Payment amount"
+                    readOnly={!!selectedInstallment}
+                    className={`${fieldErrors.amount ? "border-destructive" : ""} ${selectedInstallment ? "bg-muted cursor-not-allowed" : ""}`}
+                    onChange={(e) => {
+                      if (!selectedInstallment) {
+                        setField("amount", e.target.value);
+                        if (e.target.value) setFieldErrors((fe) => ({ ...fe, amount: "" }));
+                      }
+                    }}
+                    onBlur={(e) => {
+                      if (!selectedInstallment) {
+                        const n = parseFinancialInput(e.target.value);
+                        if (!isNaN(n) && n > 0) setField("amount", roundCents(n).toFixed(2));
+                      }
+                    }}
+                    placeholder={selectedInstallment ? "Remaining amount" : "Payment amount"}
                   />
-                  {selectedInstallment && parseFloat(form.amount) > (selectedInstallment.amount - selectedInstallment.paidAmount) && (
+                  {fieldErrors.amount && <p className="text-xs text-destructive mt-1">{fieldErrors.amount}</p>}
+                  {!fieldErrors.amount && selectedInstallment && parseFinancialInput(form.amount) > (selectedInstallment.amount - selectedInstallment.paidAmount) && (
                     <p className="text-xs text-warning mt-1">
-                      Overpayment: {fmtCurrency(parseFloat(form.amount) - (selectedInstallment.amount - selectedInstallment.paidAmount))} will be applied to the next installment.
+                      Overpayment: {fmtCurrency(roundCents(parseFinancialInput(form.amount) - (selectedInstallment.amount - selectedInstallment.paidAmount)))} will be applied to the next installment.
                     </p>
                   )}
                 </div>
 
                 <div>
                   <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Payment Date</label>
-                  <Input type="date" value={form.paymentDate} required onChange={(e) => setField("paymentDate", e.target.value)} />
+                  <Input
+                    type="date"
+                    value={form.paymentDate}
+                    className={fieldErrors.paymentDate ? "border-destructive" : ""}
+                    onChange={(e) => {
+                      setField("paymentDate", e.target.value);
+                      setFieldErrors((fe) => ({ ...fe, paymentDate: "" }));
+                    }}
+                  />
+                  {fieldErrors.paymentDate && <p className="text-xs text-destructive mt-1">{fieldErrors.paymentDate}</p>}
                 </div>
 
                 <div>
@@ -295,6 +443,7 @@ export default function PaymentsTab() {
             </Dialog.Content>
           </Dialog.Portal>
         </Dialog.Root>
+        </div>
       </div>
 
       <Card>
@@ -311,12 +460,12 @@ export default function PaymentsTab() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {payments.length === 0 && (
+              {filteredPayments.length === 0 && (
                 <tr>
                   <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">No payments yet</td>
                 </tr>
               )}
-              {payments.map((p) => (
+              {filteredPayments.map((p) => (
                 <tr key={p._id} className="hover:bg-muted/30 transition-colors">
                   <td className="px-4 py-3 font-medium">{p.clientName}</td>
                   <td className="px-4 py-3 font-medium text-success">{fmtCurrency(p.amount)}</td>

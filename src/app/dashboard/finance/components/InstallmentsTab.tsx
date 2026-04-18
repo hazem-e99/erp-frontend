@@ -1,12 +1,14 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import api from "@/lib/api";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { PageLoader } from "@/components/ui/loading";
+import { Bell, FileDown } from "lucide-react";
 import { Installment, STATUS_VARIANT, fmtCurrency, fmtDate } from "./finance.types";
-import { Bell } from "lucide-react";
+import { FilterBar } from "@/components/finance/FilterBar";
+import { exportToExcel, fmtExcelCurrency, fmtExcelDate } from "@/lib/excel-export";
 
 const STATUS_FILTERS = ["all", "pending", "overdue", "paid", "partially_paid"];
 
@@ -17,6 +19,7 @@ export default function InstallmentsTab() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [page, setPage] = useState(1);
   const LIMIT = 25;
+  const [filters, setFilters] = useState<Record<string, any>>({});
 
   const fetch = async () => {
     setLoading(true);
@@ -35,10 +38,72 @@ export default function InstallmentsTab() {
   const isOverdue = (inst: Installment) =>
     inst.status === "overdue" || (inst.status === "pending" && new Date(inst.dueDate) < new Date());
 
+  // Filter installments based on active filters
+  const filteredInstallments = useMemo(() => {
+    return installments.filter((inst) => {
+      // Customer name filter
+      if (filters.customer && !inst.clientName.toLowerCase().includes(filters.customer.toLowerCase())) {
+        return false;
+      }
+
+      // Due date range filter
+      if (filters.dateFrom && new Date(inst.dueDate) < new Date(filters.dateFrom)) {
+        return false;
+      }
+      if (filters.dateTo && new Date(inst.dueDate) > new Date(filters.dateTo)) {
+        return false;
+      }
+
+      // Amount range filter
+      if (filters.amountMin && inst.amount < parseFloat(filters.amountMin)) {
+        return false;
+      }
+      if (filters.amountMax && inst.amount > parseFloat(filters.amountMax)) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [installments, filters]);
+
+  // Export to Excel function
+  const handleExport = async () => {
+    await exportToExcel({
+      filename: 'Installments_Report',
+      sheetName: 'Installments',
+      title: 'Installments Report',
+      columns: [
+        { header: 'Customer', key: 'clientName', width: 20 },
+        { header: 'Installment', key: 'installmentNumber', width: 12, format: (_, row) => `${row.installmentNumber}/${row.totalInstallments}` },
+        { header: 'Amount', key: 'amount', width: 15, format: fmtExcelCurrency },
+        { header: 'Paid Amount', key: 'paidAmount', width: 15, format: fmtExcelCurrency },
+        { header: 'Remaining', key: 'remaining', width: 15, format: (_, row) => fmtExcelCurrency(row.amount - row.paidAmount) },
+        { header: 'Due Date', key: 'dueDate', width: 15, format: fmtExcelDate },
+        { header: 'Status', key: 'status', width: 15, format: (v) => v.replace('_', ' ') },
+      ],
+      data: filteredInstallments.map(inst => ({
+        ...inst,
+        remaining: inst.amount - inst.paidAmount,
+      })),
+    });
+  };
+
   if (loading) return <PageLoader />;
 
   return (
     <div className="space-y-4">
+      {/* Filter Bar */}
+      <FilterBar
+        fields={[
+          { key: 'customer', label: 'Customer', type: 'text', placeholder: 'Search by name...' },
+          { key: 'date', label: 'Due Date', type: 'dateRange' },
+          { key: 'amountMin', label: 'Min Amount', type: 'number', placeholder: 'Min amount...' },
+          { key: 'amountMax', label: 'Max Amount', type: 'number', placeholder: 'Max amount...' },
+        ]}
+        onFilterChange={setFilters}
+        onClear={() => setFilters({})}
+      />
+
       {/* Status filter */}
       <div className="flex items-center gap-2 flex-wrap">
         {STATUS_FILTERS.map((s) => (
@@ -52,7 +117,18 @@ export default function InstallmentsTab() {
             {s === "all" ? "All" : s.replace("_", " ")}
           </Button>
         ))}
-        <span className="ml-auto text-xs text-muted-foreground">{total} installments</span>
+        <span className="ml-auto text-xs text-muted-foreground">
+          {filteredInstallments.length} {filteredInstallments.length === total ? 'total' : `of ${total}`} installments
+        </span>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={handleExport}
+          disabled={filteredInstallments.length === 0}
+        >
+          <FileDown className="w-4 h-4 mr-1" />
+          Export to Excel
+        </Button>
       </div>
 
       <Card>
@@ -69,12 +145,12 @@ export default function InstallmentsTab() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {installments.length === 0 && (
+              {filteredInstallments.length === 0 && (
                 <tr>
                   <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">No installments found</td>
                 </tr>
               )}
-              {installments.map((inst) => (
+              {filteredInstallments.map((inst) => (
                 <tr
                   key={inst._id}
                   className={`hover:bg-muted/30 transition-colors ${isOverdue(inst) ? "bg-destructive/5" : ""}`}

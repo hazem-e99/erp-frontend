@@ -1,6 +1,7 @@
 "use client";
 import { useEffect } from "react";
 import { useThemeStore } from "@/lib/store";
+import { Toaster } from "sonner";
 import "./globals.css";
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -20,6 +21,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body className="min-h-screen antialiased">
         {children}
+        <Toaster
+          position="top-right"
+          richColors
+          closeButton
+          duration={4000}
+          toastOptions={{
+            classNames: {
+              error: "!duration-6000",
+            },
+          }}
+        />
       </body>
     </html>
   );

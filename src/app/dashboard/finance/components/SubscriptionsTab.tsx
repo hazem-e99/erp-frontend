@@ -1,16 +1,43 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
+import { z } from "zod";
 import api from "@/lib/api";
+import { toast$, financeToast } from "@/lib/toast";
+import {
+  subscriptionAmountSchema,
+  validateInstallmentRows,
+  roundCents,
+  parseFinancialInput,
+  type InstallmentRowError,
+} from "@/lib/finance-validation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { PageLoader } from "@/components/ui/loading";
 import * as Dialog from "@radix-ui/react-dialog";
-import { Plus, X, ChevronRight } from "lucide-react";
+import { Plus, X, ChevronRight, FileDown } from "lucide-react";
 import {
   Subscription, PLAN_LABELS, STATUS_VARIANT, fmtCurrency, fmtDate,
 } from "./finance.types";
+import { FilterBar } from "@/components/finance/FilterBar";
+import { exportToExcel, fmtExcelCurrency, fmtExcelDate } from "@/lib/excel-export";
+
+const subscriptionSchema = z.object({
+  clientId: z.string().min(1, "Please select a client"),
+  planType: z.enum(["monthly", "quarterly", "semi_annual"]),
+  startDate: z.string().min(1, "Start date is required"),
+  installmentPlan: z.enum(["full", "split_2", "custom"]),
+  description: z.string().min(3, "Description must be at least 3 characters"),
+  totalPrice: subscriptionAmountSchema.optional(),
+}).superRefine((data, ctx) => {
+  if (data.installmentPlan === "full") {
+    if (data.totalPrice === undefined || data.totalPrice === null) {
+      ctx.addIssue({ code: "custom", path: ["totalPrice"], message: "Total price is required" });
+    }
+    // subscriptionAmountSchema covers > 0, ≤ 1M, 2-decimal checks already
+  }
+});
 
 const PLAN_MONTHS = { monthly: 1, quarterly: 3, semi_annual: 6 };
 
@@ -33,7 +60,11 @@ export default function SubscriptionsTab() {
   const [cancelReason, setCancelReason] = useState("");
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({ ...emptyForm });
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [rowErrors, setRowErrors] = useState<Record<number, InstallmentRowError>>({});
+  const [rowTotalError, setRowTotalError] = useState<string | null>(null);
   const [clients, setClients] = useState<any[]>([]);
+  const [filters, setFilters] = useState<Record<string, any>>({});
   // Per-installment rows: each has amount + dueDate (used for split_2 and custom)
   const [installmentRows, setInstallmentRows] = useState<{ amount: string; dueDate: string }[]>(
     [{ amount: "", dueDate: "" }, { amount: "", dueDate: "" }]
@@ -65,16 +96,34 @@ export default function SubscriptionsTab() {
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Zod validation for main fields
+    const rawPrice = form.totalPrice ? parseFinancialInput(form.totalPrice) : undefined;
+    const parsed = subscriptionSchema.safeParse({
+      ...form,
+      totalPrice: rawPrice,
+    });
+    if (!parsed.success) {
+      const errs: Record<string, string> = {};
+      parsed.error.issues.forEach((issue) => { errs[issue.path[0] as string] = issue.message; });
+      setFieldErrors(errs);
+      return;
+    }
+    setFieldErrors({});
+
+    // Installment row validation
+    if (showRows) {
+      const { rowErrors: rErrs, totalAmountError } = validateInstallmentRows(installmentRows);
+      setRowErrors(rErrs);
+      setRowTotalError(totalAmountError);
+      if (Object.keys(rErrs).length > 0 || totalAmountError) return;
+    } else {
+      setRowErrors({});
+      setRowTotalError(null);
+    }
+
     setSaving(true);
     try {
-      // Validate installment rows
-      if (showRows) {
-        const hasInvalidAmt = installmentRows.some((r) => !r.amount || isNaN(parseFloat(r.amount)) || parseFloat(r.amount) <= 0);
-        const hasInvalidDate = installmentRows.some((r) => !r.dueDate);
-        if (hasInvalidAmt) { alert("Please fill in all installment amounts."); setSaving(false); return; }
-        if (hasInvalidDate) { alert("Please fill in all installment due dates."); setSaving(false); return; }
-      }
-
       const payload: Record<string, any> = {
         clientId: form.clientId,
         clientName: form.clientName,
@@ -86,11 +135,12 @@ export default function SubscriptionsTab() {
 
       if (showRows) {
         payload.installmentItems = installmentRows.map((r) => ({
-          amount: parseFloat(r.amount),
+          // round before sending to prevent float artefacts
+          amount: roundCents(parseFinancialInput(r.amount)),
           dueDate: r.dueDate,
         }));
       } else {
-        payload.totalPrice = parseFloat(form.totalPrice);
+        payload.totalPrice = roundCents(rawPrice!);
       }
 
       await api.post("/finance/subscriptions", payload);
@@ -98,10 +148,9 @@ export default function SubscriptionsTab() {
       setForm({ ...emptyForm });
       setInstallmentRows([{ amount: "", dueDate: "" }, { amount: "", dueDate: "" }]);
       fetch();
+      financeToast.subscriptionCreated();
     } catch (e: any) {
-      const msg = e.response?.data?.errors?.join("\n") ?? e.response?.data?.message ?? "Failed to create subscription";
-      alert(msg);
-      console.warn("Create subscription error:", e.response?.data ?? e.message);
+      toast$.apiError(e);
     }
     setSaving(false);
   };
@@ -114,22 +163,123 @@ export default function SubscriptionsTab() {
       setCancelId(null);
       setCancelReason("");
       fetch();
-    } catch (e) { console.error(e); }
+      financeToast.subscriptionCancelled();
+    } catch (e: any) {
+      toast$.apiError(e);
+    }
     setSaving(false);
   };
 
   const setField = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
 
+  // Filter subscriptions based on active filters
+  const filteredSubs = useMemo(() => {
+    return subs.filter((sub) => {
+      // Customer name filter
+      if (filters.customer && !sub.clientName.toLowerCase().includes(filters.customer.toLowerCase())) {
+        return false;
+      }
+
+      // Plan type filter
+      if (filters.planType && sub.planType !== filters.planType) {
+        return false;
+      }
+
+      // Status filter
+      if (filters.status && sub.status !== filters.status) {
+        return false;
+      }
+
+      // Date range filter
+      if (filters.dateFrom && new Date(sub.startDate) < new Date(filters.dateFrom)) {
+        return false;
+      }
+      if (filters.dateTo && new Date(sub.startDate) > new Date(filters.dateTo)) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [subs, filters]);
+
+  // Export to Excel function
+  const handleExport = async () => {
+    await exportToExcel({
+      filename: 'Subscriptions_Report',
+      sheetName: 'Subscriptions',
+      title: 'Subscriptions Report',
+      columns: [
+        { header: 'Customer', key: 'clientName', width: 20 },
+        { header: 'Plan', key: 'planType', width: 15, format: (v) => PLAN_LABELS[v] || v },
+        { header: 'Installments', key: 'installments', width: 15, format: (_, row) => `${row.paidInstallmentsCount || 0}/${row.totalInstallmentsCount || 0}` },
+        { header: 'Total Price', key: 'totalPrice', width: 15, format: fmtExcelCurrency },
+        { header: 'Paid Amount', key: 'paidAmount', width: 15, format: fmtExcelCurrency },
+        { header: 'Remaining', key: 'remaining', width: 15, format: (_, row) => fmtExcelCurrency(row.totalPrice - row.paidAmount) },
+        { header: 'Start Date', key: 'startDate', width: 15, format: fmtExcelDate },
+        { header: 'End Date', key: 'endDate', width: 15, format: fmtExcelDate },
+        { header: 'Status', key: 'status', width: 12 },
+      ],
+      data: filteredSubs.map(s => ({
+        ...s,
+        installments: `${s.paidInstallmentsCount || 0}/${s.totalInstallmentsCount || 0}`,
+        remaining: s.totalPrice - s.paidAmount,
+      })),
+    });
+  };
+
   if (loading) return <PageLoader />;
 
   return (
     <div className="space-y-4">
+      {/* Filter Bar */}
+      <FilterBar
+        fields={[
+          { key: 'customer', label: 'Customer', type: 'text', placeholder: 'Search by name...' },
+          {
+            key: 'planType',
+            label: 'Plan Type',
+            type: 'select',
+            options: [
+              { label: 'Monthly', value: 'monthly' },
+              { label: 'Quarterly', value: 'quarterly' },
+              { label: 'Semi-Annual', value: 'semi_annual' },
+            ],
+          },
+          {
+            key: 'status',
+            label: 'Status',
+            type: 'select',
+            options: [
+              { label: 'Pending', value: 'pending' },
+              { label: 'Active', value: 'active' },
+              { label: 'Completed', value: 'completed' },
+              { label: 'Cancelled', value: 'cancelled' },
+            ],
+          },
+          { key: 'date', label: 'Start Date', type: 'dateRange' },
+        ]}
+        onFilterChange={setFilters}
+        onClear={() => setFilters({})}
+      />
+
       <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">{total} total subscriptions</p>
-        <Dialog.Root open={open} onOpenChange={setOpen}>
-          <Dialog.Trigger asChild>
-            <Button size="sm"><Plus className="w-4 h-4 mr-1" />New Subscription</Button>
-          </Dialog.Trigger>
+        <p className="text-sm text-muted-foreground">
+          {filteredSubs.length} {filteredSubs.length === total ? 'total' : `of ${total}`} subscriptions
+        </p>
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleExport}
+            disabled={filteredSubs.length === 0}
+          >
+            <FileDown className="w-4 h-4 mr-1" />
+            Export to Excel
+          </Button>
+          <Dialog.Root open={open} onOpenChange={setOpen}>
+            <Dialog.Trigger asChild>
+              <Button size="sm"><Plus className="w-4 h-4 mr-1" />New Subscription</Button>
+            </Dialog.Trigger>
           <Dialog.Portal>
             <Dialog.Overlay className="fixed inset-0 bg-black/50 z-50" />
             <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-lg bg-card border border-border rounded-xl shadow-xl p-6 max-h-[90vh] overflow-y-auto">
@@ -145,12 +295,14 @@ export default function SubscriptionsTab() {
                   <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Client</label>
                   {clients.length > 0 ? (
                     <select
-                      className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm"
+                      className={`w-full h-9 rounded-md border bg-background px-3 text-sm ${
+                        fieldErrors.clientId ? "border-destructive" : "border-input"
+                      }`}
                       value={form.clientId}
-                      required
                       onChange={(e) => {
                         const c = clients.find((x) => x._id === e.target.value);
                         setForm((f) => ({ ...f, clientId: e.target.value, clientName: c?.name ?? c?.company ?? "" }));
+                        if (e.target.value) setFieldErrors((fe) => ({ ...fe, clientId: "" }));
                       }}
                     >
                       <option value="">Select client...</option>
@@ -162,10 +314,10 @@ export default function SubscriptionsTab() {
                     <Input
                       placeholder="Client name"
                       value={form.clientName}
-                      required
                       onChange={(e) => setField("clientName", e.target.value)}
                     />
                   )}
+                  {fieldErrors.clientId && <p className="text-xs text-destructive mt-1">{fieldErrors.clientId}</p>}
                 </div>
 
                 {/* Plan type */}
@@ -192,9 +344,18 @@ export default function SubscriptionsTab() {
                       step="0.01"
                       placeholder="0.00"
                       value={form.totalPrice}
-                      required
-                      onChange={(e) => setField("totalPrice", e.target.value)}
+                      className={fieldErrors.totalPrice ? "border-destructive" : ""}
+                      onChange={(e) => {
+                        setField("totalPrice", e.target.value);
+                        if (e.target.value) setFieldErrors((fe) => ({ ...fe, totalPrice: "" }));
+                      }}
+                      onBlur={(e) => {
+                        // Normalize to 2 decimal places on blur
+                        const n = parseFinancialInput(e.target.value);
+                        if (!isNaN(n) && n > 0) setField("totalPrice", roundCents(n).toFixed(2));
+                      }}
                     />
+                    {fieldErrors.totalPrice && <p className="text-xs text-destructive mt-1">{fieldErrors.totalPrice}</p>}
                   </div>
                 )}
 
@@ -204,9 +365,13 @@ export default function SubscriptionsTab() {
                   <Input
                     type="date"
                     value={form.startDate}
-                    required
-                    onChange={(e) => setField("startDate", e.target.value)}
+                    className={fieldErrors.startDate ? "border-destructive" : ""}
+                    onChange={(e) => {
+                      setField("startDate", e.target.value);
+                      setFieldErrors((fe) => ({ ...fe, startDate: "" }));
+                    }}
                   />
+                  {fieldErrors.startDate && <p className="text-xs text-destructive mt-1">{fieldErrors.startDate}</p>}
                 </div>
 
                 {/* Installment plan */}
@@ -249,41 +414,64 @@ export default function SubscriptionsTab() {
                     </div>
                     <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
                       {installmentRows.map((row, i) => (
-                        <div key={i} className="flex items-center gap-2">
-                          <span className="text-xs text-muted-foreground w-6 text-right shrink-0">#{i + 1}</span>
-                          <Input
-                            type="number"
-                            min="0.01"
-                            step="0.01"
-                            placeholder="Amount ($)"
-                            value={row.amount}
-                            required
-                            onChange={(e) => setRowField(i, "amount", e.target.value)}
-                            className="flex-1"
-                          />
-                          <Input
-                            type="date"
-                            value={row.dueDate}
-                            required
-                            onChange={(e) => setRowField(i, "dueDate", e.target.value)}
-                            className="flex-1"
-                          />
-                          {form.installmentPlan === "custom" && installmentRows.length > 2 && (
-                            <button
-                              type="button"
-                              onClick={() => removeRow(i)}
-                              className="text-muted-foreground hover:text-destructive transition-colors shrink-0"
-                            >
-                              <X className="w-4 h-4" />
-                            </button>
+                        <div key={i} className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-muted-foreground w-6 text-right shrink-0">#{i + 1}</span>
+                            <Input
+                              type="number"
+                              min="0.01"
+                              step="0.01"
+                              placeholder="Amount ($)"
+                              value={row.amount}
+                              className={`flex-1 ${rowErrors[i]?.amount ? "border-destructive" : ""}`}
+                              onChange={(e) => {
+                                setRowField(i, "amount", e.target.value);
+                                if (rowErrors[i]?.amount) setRowErrors((re) => { const n = { ...re }; delete n[i]?.amount; return n; });
+                              }}
+                              onBlur={(e) => {
+                                const n = parseFinancialInput(e.target.value);
+                                if (!isNaN(n) && n > 0) setRowField(i, "amount", roundCents(n).toFixed(2));
+                              }}
+                            />
+                            <Input
+                              type="date"
+                              value={row.dueDate}
+                              className={`flex-1 ${rowErrors[i]?.dueDate ? "border-destructive" : ""}`}
+                              onChange={(e) => {
+                                setRowField(i, "dueDate", e.target.value);
+                                if (rowErrors[i]?.dueDate) setRowErrors((re) => { const n = { ...re }; delete n[i]?.dueDate; return n; });
+                              }}
+                            />
+                            {form.installmentPlan === "custom" && installmentRows.length > 2 && (
+                              <button
+                                type="button"
+                                onClick={() => removeRow(i)}
+                                className="text-muted-foreground hover:text-destructive transition-colors shrink-0"
+                              >
+                                <X className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
+                          {rowErrors[i]?.amount && (
+                            <p className="text-xs text-destructive pl-8">{rowErrors[i].amount}</p>
+                          )}
+                          {rowErrors[i]?.dueDate && (
+                            <p className="text-xs text-destructive pl-8">{rowErrors[i].dueDate}</p>
                           )}
                         </div>
                       ))}
                     </div>
                     {rowsTotal > 0 && (
-                      <div className="flex justify-between items-center rounded-md bg-primary/10 border border-primary/20 px-3 py-2 text-xs">
+                      <div className={`flex justify-between items-center rounded-md border px-3 py-2 text-xs ${
+                        rowTotalError
+                          ? "bg-destructive/10 border-destructive/30 text-destructive"
+                          : "bg-primary/10 border-primary/20"
+                      }`}>
                         <span className="text-muted-foreground">{installmentRows.length} installments</span>
-                        <span className="text-primary font-semibold">Total: {fmtCurrency(rowsTotal)}</span>
+                        <span className="font-semibold">
+                          Total: {fmtCurrency(rowsTotal)}
+                          {rowTotalError && ` — ${rowTotalError}`}
+                        </span>
                       </div>
                     )}
                   </div>
@@ -295,9 +483,13 @@ export default function SubscriptionsTab() {
                   <Input
                     placeholder="Service description..."
                     value={form.description}
-                    required
-                    onChange={(e) => setField("description", e.target.value)}
+                    className={fieldErrors.description ? "border-destructive" : ""}
+                    onChange={(e) => {
+                      setField("description", e.target.value);
+                      if (e.target.value.length >= 3) setFieldErrors((fe) => ({ ...fe, description: "" }));
+                    }}
                   />
+                  {fieldErrors.description && <p className="text-xs text-destructive mt-1">{fieldErrors.description}</p>}
                 </div>
 
                 {/* Preview */}
@@ -331,6 +523,7 @@ export default function SubscriptionsTab() {
             </Dialog.Content>
           </Dialog.Portal>
         </Dialog.Root>
+        </div>
       </div>
 
       {/* Table */}
@@ -341,6 +534,7 @@ export default function SubscriptionsTab() {
               <tr className="border-b border-border text-left text-xs text-muted-foreground">
                 <th className="px-4 py-3 font-medium">Customer</th>
                 <th className="px-4 py-3 font-medium">Plan</th>
+                <th className="px-4 py-3 font-medium">Installments</th>
                 <th className="px-4 py-3 font-medium">Total</th>
                 <th className="px-4 py-3 font-medium">Paid</th>
                 <th className="px-4 py-3 font-medium">Remaining</th>
@@ -350,15 +544,31 @@ export default function SubscriptionsTab() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {subs.length === 0 && (
+              {filteredSubs.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">No subscriptions yet</td>
+                  <td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">No subscriptions yet</td>
                 </tr>
               )}
-              {subs.map((s) => (
+              {filteredSubs.map((s) => (
                 <tr key={s._id} className="hover:bg-muted/30 transition-colors">
                   <td className="px-4 py-3 font-medium">{s.clientName}</td>
                   <td className="px-4 py-3 text-muted-foreground">{PLAN_LABELS[s.planType]}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-medium text-primary">
+                        {s.paidInstallmentsCount ?? 0}
+                      </span>
+                      <span className="text-xs text-muted-foreground">/</span>
+                      <span className="text-xs font-medium text-muted-foreground">
+                        {s.totalInstallmentsCount ?? 0}
+                      </span>
+                      {s.paidInstallmentsCount === s.totalInstallmentsCount && s.totalInstallmentsCount > 0 && (
+                        <Badge variant="secondary" className="ml-1 text-[10px] h-4 px-1.5 bg-emerald-100 text-emerald-700 border-emerald-200">
+                          ✓
+                        </Badge>
+                      )}
+                    </div>
+                  </td>
                   <td className="px-4 py-3 font-medium">{fmtCurrency(s.totalPrice)}</td>
                   <td className="px-4 py-3 text-success">{fmtCurrency(s.paidAmount)}</td>
                   <td className="px-4 py-3 text-warning">{fmtCurrency(s.totalPrice - s.paidAmount)}</td>

@@ -1,11 +1,14 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import api from "@/lib/api";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { PageLoader } from "@/components/ui/loading";
+import { FileDown } from "lucide-react";
 import { Revenue, STATUS_VARIANT, fmtCurrency, fmtDate } from "./finance.types";
+import { FilterBar } from "@/components/finance/FilterBar";
+import { exportToExcel, fmtExcelCurrency, fmtExcelDate } from "@/lib/excel-export";
 
 export default function RevenueTab() {
   const [revenue, setRevenue] = useState<Revenue[]>([]);
@@ -14,6 +17,7 @@ export default function RevenueTab() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [page, setPage] = useState(1);
   const LIMIT = 25;
+  const [filters, setFilters] = useState<Record<string, any>>({});
 
   const fetch = async () => {
     setLoading(true);
@@ -29,10 +33,68 @@ export default function RevenueTab() {
 
   useEffect(() => { fetch(); }, [statusFilter, page]);
 
+  // Filter revenue based on active filters
+  const filteredRevenue = useMemo(() => {
+    return revenue.filter((rev) => {
+      // Customer name filter
+      if (filters.customer && !rev.clientName.toLowerCase().includes(filters.customer.toLowerCase())) {
+        return false;
+      }
+
+      // Date range filter (recognition date)
+      if (filters.dateFrom && new Date(rev.recognitionDate) < new Date(filters.dateFrom)) {
+        return false;
+      }
+      if (filters.dateTo && new Date(rev.recognitionDate) > new Date(filters.dateTo)) {
+        return false;
+      }
+
+      // Amount range filter
+      if (filters.amountMin && rev.amount < parseFloat(filters.amountMin)) {
+        return false;
+      }
+      if (filters.amountMax && rev.amount > parseFloat(filters.amountMax)) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [revenue, filters]);
+
+  // Export to Excel function
+  const handleExport = async () => {
+    await exportToExcel({
+      filename: 'Revenue_Report',
+      sheetName: 'Revenue',
+      title: 'Revenue Recognition Report',
+      columns: [
+        { header: 'Customer', key: 'clientName', width: 20 },
+        { header: 'Description', key: 'description', width: 35 },
+        { header: 'Amount', key: 'amount', width: 15, format: fmtExcelCurrency },
+        { header: 'Recognition Date', key: 'recognitionDate', width: 18, format: fmtExcelDate },
+        { header: 'Period Month', key: 'periodMonth', width: 12 },
+        { header: 'Status', key: 'status', width: 12 },
+      ],
+      data: filteredRevenue,
+    });
+  };
+
   if (loading) return <PageLoader />;
 
   return (
     <div className="space-y-4">
+      {/* Filter Bar */}
+      <FilterBar
+        fields={[
+          { key: 'customer', label: 'Customer', type: 'text', placeholder: 'Search by name...' },
+          { key: 'date', label: 'Recognition Date', type: 'dateRange' },
+          { key: 'amountMin', label: 'Min Amount', type: 'number', placeholder: 'Min amount...' },
+          { key: 'amountMax', label: 'Max Amount', type: 'number', placeholder: 'Max amount...' },
+        ]}
+        onFilterChange={setFilters}
+        onClear={() => setFilters({})}
+      />
+
       <div className="flex items-center gap-2 flex-wrap">
         {["all", "pending", "recognized", "cancelled"].map((s) => (
           <Button
@@ -45,7 +107,18 @@ export default function RevenueTab() {
             {s}
           </Button>
         ))}
-        <span className="ml-auto text-xs text-muted-foreground">{total} entries</span>
+        <span className="ml-auto text-xs text-muted-foreground">
+          {filteredRevenue.length} {filteredRevenue.length === total ? 'total' : `of ${total}`} entries
+        </span>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={handleExport}
+          disabled={filteredRevenue.length === 0}
+        >
+          <FileDown className="w-4 h-4 mr-1" />
+          Export to Excel
+        </Button>
       </div>
 
       <div className="rounded-lg bg-muted/40 border border-border px-4 py-3 text-xs text-muted-foreground">
@@ -67,12 +140,12 @@ export default function RevenueTab() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {revenue.length === 0 && (
+              {filteredRevenue.length === 0 && (
                 <tr>
                   <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">No revenue entries found</td>
                 </tr>
               )}
-              {revenue.map((r) => (
+              {filteredRevenue.map((r) => (
                 <tr key={r._id} className="hover:bg-muted/30 transition-colors">
                   <td className="px-4 py-3 font-medium">{r.clientName}</td>
                   <td className="px-4 py-3 text-muted-foreground text-xs max-w-xs truncate">{r.description}</td>

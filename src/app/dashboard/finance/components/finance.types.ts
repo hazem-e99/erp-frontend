@@ -11,6 +11,8 @@ export interface Subscription {
   installmentPlan: "full" | "split_2" | "custom";
   customInstallments?: number;
   paidAmount: number;
+  paidInstallmentsCount?: number;
+  totalInstallmentsCount?: number;
   description: string;
   createdAt: string;
 }
