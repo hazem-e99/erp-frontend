@@ -11,6 +11,7 @@ import { PageLoader, EmptyState } from "@/components/ui/loading";
 import api from "@/lib/api";
 import { Plus, Search, Briefcase, X, Loader2, DollarSign, Eye, Mail, Phone, Trash2, Building2, Users, FileText } from "lucide-react";
 import { toast } from "sonner";
+import { SupportedCurrency, BASE_CURRENCY, CURRENCY_NAMES, calculateBaseAmount } from "@/app/dashboard/finance/components/finance.types";
 
 export default function EmployeesPage() {
   const router = useRouter();
@@ -25,7 +26,10 @@ export default function EmployeesPage() {
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
     name: '', employeeId: '', emailAddress: '', password: '',
-    age: '', baseSalary: 0, maxKpi: 0, dateOfJoining: '',
+    age: '', 
+    currency: BASE_CURRENCY as SupportedCurrency,
+    exchangeRate: 1,
+    baseSalary: 0, maxKpi: 0, dateOfJoining: '',
     address: '', emergencyContact: '', whatsappNumber: '',
     positions: [] as string[], departments: [] as string[], contractTypes: [] as string[],
   });
@@ -101,7 +105,10 @@ export default function EmployeesPage() {
   const resetForm = () => {
     setForm({
       name: '', employeeId: '', emailAddress: '', password: '',
-      age: '', baseSalary: 0, maxKpi: 0, dateOfJoining: '',
+      age: '', 
+      currency: BASE_CURRENCY,
+      exchangeRate: 1,
+      baseSalary: 0, maxKpi: 0, dateOfJoining: '',
       address: '', emergencyContact: '', whatsappNumber: '',
       positions: [], departments: [], contractTypes: [],
     });
@@ -141,6 +148,8 @@ export default function EmployeesPage() {
       emailAddress: emp.emailAddress || '',
       password: '',
       age: emp.age || '',
+      currency: emp.currency || BASE_CURRENCY,
+      exchangeRate: emp.exchangeRate || 1,
       baseSalary: emp.baseSalary,
       maxKpi: emp.maxKpi || 0,
       dateOfJoining: emp.dateOfJoining?.split('T')[0] || '',
@@ -350,12 +359,27 @@ export default function EmployeesPage() {
                     <h4 className="text-sm font-medium text-muted-foreground">Employment Details</h4>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                       <div className="space-y-1.5">
-                        <label className="text-sm font-medium">Base Salary <span className="text-destructive">*</span></label>
-                        <Input type="number" placeholder="e.g. 5000" value={form.baseSalary || ''} onChange={(e) => setForm({...form, baseSalary: +e.target.value})} required />
+                        <label className="text-sm font-medium">Currency</label>
+                        <select
+                          className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                          value={form.currency}
+                          onChange={(e) => setForm({...form, currency: e.target.value as SupportedCurrency})}
+                        >
+                          {Object.entries(CURRENCY_NAMES).map(([code, name]) => (
+                            <option key={code} value={code}>{name} ({code})</option>
+                          ))}
+                        </select>
                       </div>
                       <div className="space-y-1.5">
-                        <label className="text-sm font-medium">Max KPI ($)</label>
-                        <Input type="number" placeholder="e.g. 1000" value={form.maxKpi || ''} onChange={(e) => setForm({...form, maxKpi: +e.target.value})} />
+                        <label className="text-sm font-medium">Exchange Rate to EGP</label>
+                        <Input 
+                          type="number" 
+                          step="0.0001"
+                          placeholder="e.g. 30.5000" 
+                          value={form.exchangeRate || ''} 
+                          onChange={(e) => setForm({...form, exchangeRate: +e.target.value})}
+                          disabled={form.currency === BASE_CURRENCY}
+                        />
                       </div>
                       {!editId && (
                         <div className="space-y-1.5">
@@ -363,6 +387,26 @@ export default function EmployeesPage() {
                           <Input type="date" value={form.dateOfJoining} onChange={(e) => setForm({...form, dateOfJoining: e.target.value})} required />
                         </div>
                       )}
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <label className="text-sm font-medium">Base Salary ({form.currency}) <span className="text-destructive">*</span></label>
+                        <Input type="number" placeholder="e.g. 5000" value={form.baseSalary || ''} onChange={(e) => setForm({...form, baseSalary: +e.target.value})} required />
+                        {form.currency !== BASE_CURRENCY && form.baseSalary > 0 && form.exchangeRate > 0 && (
+                          <p className="text-xs text-muted-foreground">
+                            = {calculateBaseAmount(form.baseSalary, form.exchangeRate).toLocaleString()} {BASE_CURRENCY} (base)
+                          </p>
+                        )}
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-sm font-medium">Max KPI ({form.currency})</label>
+                        <Input type="number" placeholder="e.g. 1000" value={form.maxKpi || ''} onChange={(e) => setForm({...form, maxKpi: +e.target.value})} />
+                        {form.currency !== BASE_CURRENCY && form.maxKpi > 0 && form.exchangeRate > 0 && (
+                          <p className="text-xs text-muted-foreground">
+                            = {calculateBaseAmount(form.maxKpi, form.exchangeRate).toLocaleString()} {BASE_CURRENCY} (base)
+                          </p>
+                        )}
+                      </div>
                     </div>
                   </div>
 
@@ -429,7 +473,13 @@ export default function EmployeesPage() {
                     </div>
                     <div className="space-y-1 text-xs text-muted-foreground">
                       <p className="flex items-center gap-2"><Briefcase className="w-3 h-3" />{emp.departments?.[0] || 'N/A'}</p>
-                      <p className="flex items-center gap-2"><DollarSign className="w-3 h-3" />${emp.baseSalary?.toLocaleString()}/mo</p>
+                      <p className="flex items-center gap-2">
+                        <DollarSign className="w-3 h-3" />
+                        {emp.baseSalary?.toLocaleString()} {emp.currency || BASE_CURRENCY}/mo
+                        {emp.currency && emp.currency !== BASE_CURRENCY && emp.exchangeRate && (
+                          <span className="text-[10px]"> (@{emp.exchangeRate})</span>
+                        )}
+                      </p>
                       <p className="flex items-center gap-2"><Mail className="w-3 h-3" />{emp.emailAddress || emp.userId?.email || 'N/A'}</p>
                       {emp.whatsappNumber && <p className="flex items-center gap-2"><Phone className="w-3 h-3" />{emp.whatsappNumber}</p>}
                     </div>

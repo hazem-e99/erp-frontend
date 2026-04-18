@@ -1,8 +1,14 @@
 import { z } from "zod";
 
+// ─── Currency Types ────────────────────────────────────────────────────────
+export type SupportedCurrency = 'EGP' | 'USD' | 'SAR' | 'EUR' | 'GBP' | 'AED';
+export const BASE_CURRENCY: SupportedCurrency = 'EGP';
+
 // ─── Constants ─────────────────────────────────────────────────────────────
 export const MAX_FINANCIAL_AMOUNT = 1_000_000;
 export const MAX_EXPENSE_AMOUNT   = 500_000;
+export const MAX_EXCHANGE_RATE    = 10_000;
+export const MIN_EXCHANGE_RATE    = 0.0001;
 
 // ─── Utilities ─────────────────────────────────────────────────────────────
 
@@ -31,6 +37,23 @@ export function parseFinancialInput(raw: string): number {
   // Reject if string has trailing non-numeric chars ("100abc")
   if (isNaN(n) || !/^-?\d+(\.\d+)?$/.test(trimmed)) return NaN;
   return n;
+}
+
+/**
+ * Calculate base amount (in base currency) from original amount and exchange rate.
+ * This is the frontend's preview of what backend will calculate.
+ */
+export function calculateBaseAmount(amount: number, exchangeRate: number): number {
+  return roundCents(amount * exchangeRate);
+}
+
+/**
+ * Returns true if a number has at most 4 decimal places (for exchange rates).
+ */
+export function hasFourDecimalsOrLess(value: number): boolean {
+  if (!isFinite(value) || isNaN(value)) return false;
+  const rounded = Math.round(value * 10000) / 10000;
+  return Math.abs(rounded - value) < 1e-10;
 }
 
 // ─── Shared Zod schema builder ─────────────────────────────────────────────
@@ -97,6 +120,29 @@ export const expenseAmountSchema = financialAmountSchema({
   label: "Expense amount",
   max: MAX_EXPENSE_AMOUNT,
 });
+
+// ─── Currency schemas ──────────────────────────────────────────────────────
+
+export const currencySchema = z.enum(['EGP', 'USD', 'SAR', 'EUR', 'GBP', 'AED'], {
+  message: "Please select a valid currency",
+});
+
+export const exchangeRateSchema = z
+  .number({
+    message: "Exchange rate must be a valid number",
+  })
+  .refine((v) => isFinite(v), {
+    message: "Exchange rate must be a finite number",
+  })
+  .refine((v) => v >= MIN_EXCHANGE_RATE, {
+    message: `Exchange rate must be at least ${MIN_EXCHANGE_RATE}`,
+  })
+  .refine((v) => v <= MAX_EXCHANGE_RATE, {
+    message: `Exchange rate cannot exceed ${MAX_EXCHANGE_RATE.toLocaleString()}`,
+  })
+  .refine(hasFourDecimalsOrLess, {
+    message: "Exchange rate must have at most 4 decimal places",
+  });
 
 // ─── Installment row validator ─────────────────────────────────────────────
 

@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, useMemo } from "react";
 import { z } from "zod";
 import api from "@/lib/api";
 import { toast$, financeToast } from "@/lib/toast";
-import { expenseAmountSchema, roundCents, parseFinancialInput } from "@/lib/finance-validation";
+import { expenseAmountSchema, roundCents, parseFinancialInput, currencySchema, exchangeRateSchema, calculateBaseAmount, type SupportedCurrency, BASE_CURRENCY } from "@/lib/finance-validation";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { PageLoader } from "@/components/ui/loading";
 import * as Dialog from "@radix-ui/react-dialog";
 import { Plus, Trash2, X, Paperclip, FileDown } from "lucide-react";
-import { Expense, CATEGORY_LABELS, fmtCurrency, fmtDate } from "./finance.types";
+import { Expense, CATEGORY_LABELS, fmtCurrency, fmtDate, CURRENCY_NAMES, type SupportedCurrency as TSupportedCurrency } from "./finance.types";
 import { FilterBar } from "@/components/finance/FilterBar";
 import { exportToExcel, fmtExcelCurrency, fmtExcelDate } from "@/lib/excel-export";
 
@@ -20,6 +20,8 @@ const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
 
 const expenseSchema = z.object({
   amount: expenseAmountSchema,
+  currency: currencySchema,
+  exchangeRate: exchangeRateSchema,
   category: z.enum(["salaries", "ads", "bank_fees", "tools", "freelancers", "other"]),
   date: z.string().min(1, "Date is required"),
   description: z.string().min(3, "Description must be at least 3 characters"),
@@ -42,6 +44,8 @@ export default function ExpensesTab() {
 
   const [form, setForm] = useState({
     amount: "",
+    currency: BASE_CURRENCY as string,
+    exchangeRate: "1",
     category: "other",
     date: new Date().toISOString().slice(0, 10),
     description: "",
@@ -82,9 +86,11 @@ export default function ExpensesTab() {
     e.preventDefault();
 
     const parsedAmount = parseFinancialInput(form.amount);
+    const parsedExchangeRate = parseFinancialInput(form.exchangeRate);
     const parsed = expenseSchema.safeParse({
       ...form,
       amount: isNaN(parsedAmount) ? undefined : parsedAmount,
+      exchangeRate: parsedExchangeRate,
     });
     if (!parsed.success) {
       const errs: Record<string, string> = {};
@@ -112,6 +118,8 @@ export default function ExpensesTab() {
       const fd = new FormData();
       // Send normalized amount — prevents float artefacts reaching the backend
       fd.append("amount", String(roundCents(parsedAmount)));
+      fd.append("currency", form.currency);
+      fd.append("exchangeRate", String(Math.round(parsedExchangeRate * 10000) / 10000));
       fd.append("category", form.category);
       fd.append("date", form.date);
       fd.append("description", form.description);
@@ -120,7 +128,7 @@ export default function ExpensesTab() {
         headers: { "Content-Type": "multipart/form-data" },
       });
       setOpen(false);
-      setForm({ amount: "", category: "other", date: new Date().toISOString().slice(0, 10), description: "" });
+      setForm({ amount: "", currency: BASE_CURRENCY as string, exchangeRate: "1", category: "other", date: new Date().toISOString().slice(0, 10), description: "" });
       setFileName("");
       if (fileRef.current) fileRef.current.value = "";
       fetch();
@@ -182,7 +190,10 @@ export default function ExpensesTab() {
       sheetName: 'Expenses',
       title: 'Expenses Report',
       columns: [
-        { header: 'Amount', key: 'amount', width: 15, format: fmtExcelCurrency },
+        { header: 'Currency', key: 'currency', width: 10, format: (v) => v || BASE_CURRENCY },
+        { header: 'Amount (Orig)', key: 'amount', width: 15, format: fmtExcelCurrency },
+        { header: 'Exchange Rate', key: 'exchangeRate', width: 15, format: (v) => (v ?? 1).toFixed(4) },
+        { header: 'Amount (Base)', key: 'baseAmount', width: 15, format: (v, row) => fmtExcelCurrency(v ?? row.amount) },
         { header: 'Category', key: 'category', width: 15, format: (v) => CATEGORY_LABELS[v] || v },
         { header: 'Date', key: 'date', width: 15, format: fmtExcelDate },
         { header: 'Description', key: 'description', width: 40 },
@@ -242,8 +253,61 @@ export default function ExpensesTab() {
                 </Dialog.Close>
               </div>
               <form onSubmit={handleCreate} className="space-y-4">
+                {/* Currency & Exchange Rate */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Currency</label>
+                    <select
+                      className={`w-full h-9 rounded-md border bg-background px-3 text-sm ${
+                        fieldErrors.currency ? "border-destructive" : "border-input"
+                      }`}
+                      value={form.currency}
+                      onChange={(e) => {
+                        setField("currency", e.target.value);
+                        // Reset exchange rate to 1 if selecting base currency
+                        if (e.target.value === BASE_CURRENCY) {
+                          setField("exchangeRate", "1");
+                        }
+                        if (e.target.value) setFieldErrors((fe) => ({ ...fe, currency: "" }));
+                      }}
+                    >
+                      {Object.entries(CURRENCY_NAMES).map(([code, name]) => (
+                        <option key={code} value={code}>{code} - {name}</option>
+                      ))}
+                    </select>
+                    {fieldErrors.currency && <p className="text-xs text-destructive mt-1">{fieldErrors.currency}</p>}
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                      Exchange Rate (to {BASE_CURRENCY})
+                    </label>
+                    <Input
+                      type="number"
+                      min="0.0001"
+                      step="0.0001"
+                      placeholder="1.0000"
+                      value={form.exchangeRate}
+                      disabled={form.currency === BASE_CURRENCY}
+                      className={fieldErrors.exchangeRate ? "border-destructive" : ""}
+                      onChange={(e) => {
+                        setField("exchangeRate", e.target.value);
+                        if (e.target.value) setFieldErrors((fe) => ({ ...fe, exchangeRate: "" }));
+                      }}
+                      onBlur={(e) => {
+                        const n = parseFinancialInput(e.target.value);
+                        if (!isNaN(n) && n > 0) {
+                          // Round to 4 decimals
+                          setField("exchangeRate", (Math.round(n * 10000) / 10000).toFixed(4));
+                        }
+                      }}
+                    />
+                    {fieldErrors.exchangeRate && <p className="text-xs text-destructive mt-1">{fieldErrors.exchangeRate}</p>}
+                  </div>
+                </div>
+
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Amount ($)</label>
+                  <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Amount ({form.currency})</label>
                   <Input
                     type="number"
                     min="0.01"
@@ -261,6 +325,17 @@ export default function ExpensesTab() {
                     }}
                   />
                   {fieldErrors.amount && <p className="text-xs text-destructive mt-1">{fieldErrors.amount}</p>}
+                  {form.currency !== BASE_CURRENCY && form.amount && (() => {
+                    const n = parseFinancialInput(form.amount);
+                    const rate = parseFinancialInput(form.exchangeRate);
+                    if (!isNaN(n) && !isNaN(rate) && n > 0 && rate > 0) {
+                      return (
+                        <p className="text-xs text-muted-foreground mt-1">
+                          = {fmtCurrency(calculateBaseAmount(n, rate), BASE_CURRENCY)} in base currency
+                        </p>
+                      );
+                    }
+                  })()}
                   {form.category === "salaries" && pendingSalaries > 0 && (
                     <p className="text-xs text-primary mt-1">
                       💡 Auto-filled from paid payrolls: ${pendingSalaries.toLocaleString()}
@@ -330,7 +405,8 @@ export default function ExpensesTab() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                <th className="px-4 py-3 font-medium">Amount</th>
+                <th className="px-4 py-3 font-medium">Amount (Orig.)</th>
+                <th className="px-4 py-3 font-medium">Amount (Base)</th>
                 <th className="px-4 py-3 font-medium">Category</th>
                 <th className="px-4 py-3 font-medium">Date</th>
                 <th className="px-4 py-3 font-medium">Description</th>
@@ -341,12 +417,18 @@ export default function ExpensesTab() {
             <tbody className="divide-y divide-border">
               {filteredExpenses.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">No expenses recorded</td>
+                  <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">No expenses recorded</td>
                 </tr>
               )}
               {filteredExpenses.map((exp) => (
                 <tr key={exp._id} className="hover:bg-muted/30 transition-colors">
-                  <td className="px-4 py-3 font-medium text-destructive">{fmtCurrency(exp.amount)}</td>
+                  <td className="px-4 py-3">
+                    <div className="font-medium text-destructive">{fmtCurrency(exp.amount, exp.currency ?? BASE_CURRENCY)}</div>
+                    {exp.currency && exp.currency !== BASE_CURRENCY && (
+                      <div className="text-xs text-muted-foreground">@ {(exp.exchangeRate ?? 1).toFixed(4)}</div>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 font-medium text-destructive">{fmtCurrency(exp.baseAmount ?? exp.amount, BASE_CURRENCY)}</td>
                   <td className="px-4 py-3">
                     <Badge variant="secondary" className="text-xs">{CATEGORY_LABELS[exp.category] ?? exp.category}</Badge>
                   </td>

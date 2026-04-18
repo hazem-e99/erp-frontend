@@ -9,6 +9,11 @@ import {
   roundCents,
   parseFinancialInput,
   type InstallmentRowError,
+  currencySchema,
+  exchangeRateSchema,
+  calculateBaseAmount,
+  type SupportedCurrency,
+  BASE_CURRENCY,
 } from "@/lib/finance-validation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -19,6 +24,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { Plus, X, ChevronRight, FileDown } from "lucide-react";
 import {
   Subscription, PLAN_LABELS, STATUS_VARIANT, fmtCurrency, fmtDate,
+  CURRENCY_NAMES, type SupportedCurrency as TSupportedCurrency,
 } from "./finance.types";
 import { FilterBar } from "@/components/finance/FilterBar";
 import { exportToExcel, fmtExcelCurrency, fmtExcelDate } from "@/lib/excel-export";
@@ -30,6 +36,8 @@ const subscriptionSchema = z.object({
   installmentPlan: z.enum(["full", "split_2", "custom"]),
   description: z.string().min(3, "Description must be at least 3 characters"),
   totalPrice: subscriptionAmountSchema.optional(),
+  currency: currencySchema,
+  exchangeRate: exchangeRateSchema,
 }).superRefine((data, ctx) => {
   if (data.installmentPlan === "full") {
     if (data.totalPrice === undefined || data.totalPrice === null) {
@@ -46,6 +54,8 @@ const emptyForm = {
   clientName: "",
   planType: "monthly",
   totalPrice: "",
+  currency: BASE_CURRENCY as string,
+  exchangeRate: "1",
   startDate: "",
   installmentPlan: "full",
   description: "",
@@ -99,9 +109,11 @@ export default function SubscriptionsTab() {
 
     // Zod validation for main fields
     const rawPrice = form.totalPrice ? parseFinancialInput(form.totalPrice) : undefined;
+    const rawExchangeRate = parseFinancialInput(form.exchangeRate);
     const parsed = subscriptionSchema.safeParse({
       ...form,
       totalPrice: rawPrice,
+      exchangeRate: rawExchangeRate,
     });
     if (!parsed.success) {
       const errs: Record<string, string> = {};
@@ -128,6 +140,8 @@ export default function SubscriptionsTab() {
         clientId: form.clientId,
         clientName: form.clientName,
         planType: form.planType,
+        currency: form.currency,
+        exchangeRate: roundCents(rawExchangeRate * 100) / 100, // Round to 4 decimals
         startDate: form.startDate,
         installmentPlan: form.installmentPlan,
         description: form.description,
@@ -212,9 +226,12 @@ export default function SubscriptionsTab() {
         { header: 'Customer', key: 'clientName', width: 20 },
         { header: 'Plan', key: 'planType', width: 15, format: (v) => PLAN_LABELS[v] || v },
         { header: 'Installments', key: 'installments', width: 15, format: (_, row) => `${row.paidInstallmentsCount || 0}/${row.totalInstallmentsCount || 0}` },
-        { header: 'Total Price', key: 'totalPrice', width: 15, format: fmtExcelCurrency },
-        { header: 'Paid Amount', key: 'paidAmount', width: 15, format: fmtExcelCurrency },
-        { header: 'Remaining', key: 'remaining', width: 15, format: (_, row) => fmtExcelCurrency(row.totalPrice - row.paidAmount) },
+        { header: 'Currency', key: 'currency', width: 10, format: (v) => v || BASE_CURRENCY },
+        { header: 'Total Price (Orig)', key: 'totalPrice', width: 18, format: fmtExcelCurrency },
+        { header: 'Exchange Rate', key: 'exchangeRate', width: 15, format: (v) => (v ?? 1).toFixed(4) },
+        { header: 'Total Price (Base)', key: 'baseTotalPrice', width: 18, format: (v, row) => fmtExcelCurrency(v ?? row.totalPrice) },
+        { header: 'Paid Amount (Base)', key: 'paidAmount', width: 18, format: (v) => fmtExcelCurrency(v ?? 0) },
+        { header: 'Remaining (Base)', key: 'remaining', width: 18, format: (_, row) => fmtExcelCurrency((row.baseTotalPrice ?? row.totalPrice) - (row.paidAmount ?? 0)) },
         { header: 'Start Date', key: 'startDate', width: 15, format: fmtExcelDate },
         { header: 'End Date', key: 'endDate', width: 15, format: fmtExcelDate },
         { header: 'Status', key: 'status', width: 12 },
@@ -222,7 +239,7 @@ export default function SubscriptionsTab() {
       data: filteredSubs.map(s => ({
         ...s,
         installments: `${s.paidInstallmentsCount || 0}/${s.totalInstallmentsCount || 0}`,
-        remaining: s.totalPrice - s.paidAmount,
+        remaining: (s.baseTotalPrice ?? s.totalPrice) - (s.paidAmount ?? 0),
       })),
     });
   };
@@ -334,10 +351,65 @@ export default function SubscriptionsTab() {
                   </select>
                 </div>
 
+                {/* Currency & Exchange Rate */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Currency</label>
+                    <select
+                      className={`w-full h-9 rounded-md border bg-background px-3 text-sm ${
+                        fieldErrors.currency ? "border-destructive" : "border-input"
+                      }`}
+                      value={form.currency}
+                      onChange={(e) => {
+                        setField("currency", e.target.value);
+                        // Reset exchange rate to 1 if selecting base currency
+                        if (e.target.value === BASE_CURRENCY) {
+                          setField("exchangeRate", "1");
+                        }
+                        if (e.target.value) setFieldErrors((fe) => ({ ...fe, currency: "" }));
+                      }}
+                    >
+                      {Object.entries(CURRENCY_NAMES).map(([code, name]) => (
+                        <option key={code} value={code}>{code} - {name}</option>
+                      ))}
+                    </select>
+                    {fieldErrors.currency && <p className="text-xs text-destructive mt-1">{fieldErrors.currency}</p>}
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                      Exchange Rate (to {BASE_CURRENCY})
+                    </label>
+                    <Input
+                      type="number"
+                      min="0.0001"
+                      step="0.0001"
+                      placeholder="1.0000"
+                      value={form.exchangeRate}
+                      disabled={form.currency === BASE_CURRENCY}
+                      className={fieldErrors.exchangeRate ? "border-destructive" : ""}
+                      onChange={(e) => {
+                        setField("exchangeRate", e.target.value);
+                        if (e.target.value) setFieldErrors((fe) => ({ ...fe, exchangeRate: "" }));
+                      }}
+                      onBlur={(e) => {
+                        const n = parseFinancialInput(e.target.value);
+                        if (!isNaN(n) && n > 0) {
+                          // Round to 4 decimals
+                          setField("exchangeRate", (Math.round(n * 10000) / 10000).toFixed(4));
+                        }
+                      }}
+                    />
+                    {fieldErrors.exchangeRate && <p className="text-xs text-destructive mt-1">{fieldErrors.exchangeRate}</p>}
+                  </div>
+                </div>
+
                 {/* Total price — only for full payment plan */}
                 {!showRows && (
                   <div>
-                    <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Total Price ($)</label>
+                    <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                      Total Price ({form.currency})
+                    </label>
                     <Input
                       type="number"
                       min="0.01"
@@ -356,6 +428,17 @@ export default function SubscriptionsTab() {
                       }}
                     />
                     {fieldErrors.totalPrice && <p className="text-xs text-destructive mt-1">{fieldErrors.totalPrice}</p>}
+                    {form.totalPrice && form.currency !== BASE_CURRENCY && (() => {
+                      const n = parseFinancialInput(form.totalPrice);
+                      const rate = parseFinancialInput(form.exchangeRate);
+                      if (!isNaN(n) && !isNaN(rate) && n > 0 && rate > 0) {
+                        return (
+                          <p className="text-xs text-muted-foreground mt-1">
+                            = {fmtCurrency(calculateBaseAmount(n, rate), BASE_CURRENCY)} in base currency
+                          </p>
+                        );
+                      }
+                    })()}
                   </div>
                 )}
 
@@ -421,7 +504,7 @@ export default function SubscriptionsTab() {
                               type="number"
                               min="0.01"
                               step="0.01"
-                              placeholder="Amount ($)"
+                              placeholder={`Amount (${form.currency})`}
                               value={row.amount}
                               className={`flex-1 ${rowErrors[i]?.amount ? "border-destructive" : ""}`}
                               onChange={(e) => {
@@ -462,16 +545,30 @@ export default function SubscriptionsTab() {
                       ))}
                     </div>
                     {rowsTotal > 0 && (
-                      <div className={`flex justify-between items-center rounded-md border px-3 py-2 text-xs ${
+                      <div className={`rounded-md border px-3 py-2 text-xs space-y-1 ${
                         rowTotalError
                           ? "bg-destructive/10 border-destructive/30 text-destructive"
                           : "bg-primary/10 border-primary/20"
                       }`}>
-                        <span className="text-muted-foreground">{installmentRows.length} installments</span>
-                        <span className="font-semibold">
-                          Total: {fmtCurrency(rowsTotal)}
-                          {rowTotalError && ` — ${rowTotalError}`}
-                        </span>
+                        <div className="flex justify-between items-center">
+                          <span className="text-muted-foreground">{installmentRows.length} installments</span>
+                          <span className="font-semibold">
+                            Total: {fmtCurrency(rowsTotal, form.currency as TSupportedCurrency)}
+                          </span>
+                        </div>
+                        {form.currency !== BASE_CURRENCY && (() => {
+                          const rate = parseFinancialInput(form.exchangeRate);
+                          if (!isNaN(rate) && rate > 0) {
+                            return (
+                              <div className="text-right text-muted-foreground">
+                                = {fmtCurrency(calculateBaseAmount(rowsTotal, rate), BASE_CURRENCY)} in base currency
+                              </div>
+                            );
+                          }
+                        })()}
+                        {rowTotalError && (
+                          <div className="text-destructive">{rowTotalError}</div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -499,12 +596,21 @@ export default function SubscriptionsTab() {
                       const months = PLAN_MONTHS[form.planType as keyof typeof PLAN_MONTHS];
                       const total = showRows ? rowsTotal : parseFloat(form.totalPrice || "0");
                       const count = form.installmentPlan === "full" ? 1 : installmentRows.length;
+                      const rate = parseFinancialInput(form.exchangeRate);
+                      const baseTotal = !isNaN(rate) && rate > 0 ? calculateBaseAmount(total, rate) : total;
                       return (
                         <>
                           <p>Duration: <strong>{months} month(s)</strong></p>
-                          <p>Revenue recognition: <strong>{months}</strong> × {fmtCurrency(total / months)}/mo</p>
+                          <p>Revenue recognition: <strong>{months}</strong> × {fmtCurrency(total / months, form.currency as TSupportedCurrency)}/mo</p>
                           <p>Installments: <strong>{count}</strong></p>
-                          {total > 0 && <p>Total contract value: <strong>{fmtCurrency(total)}</strong></p>}
+                          {total > 0 && (
+                            <>
+                              <p>Total contract value: <strong>{fmtCurrency(total, form.currency as TSupportedCurrency)}</strong></p>
+                              {form.currency !== BASE_CURRENCY && (
+                                <p>Base currency: <strong>{fmtCurrency(baseTotal, BASE_CURRENCY)}</strong></p>
+                              )}
+                            </>
+                          )}
                         </>
                       );
                     })()}
@@ -535,7 +641,8 @@ export default function SubscriptionsTab() {
                 <th className="px-4 py-3 font-medium">Customer</th>
                 <th className="px-4 py-3 font-medium">Plan</th>
                 <th className="px-4 py-3 font-medium">Installments</th>
-                <th className="px-4 py-3 font-medium">Total</th>
+                <th className="px-4 py-3 font-medium">Total (Orig.)</th>
+                <th className="px-4 py-3 font-medium">Total (Base)</th>
                 <th className="px-4 py-3 font-medium">Paid</th>
                 <th className="px-4 py-3 font-medium">Remaining</th>
                 <th className="px-4 py-3 font-medium">Start → End</th>
@@ -546,7 +653,7 @@ export default function SubscriptionsTab() {
             <tbody className="divide-y divide-border">
               {filteredSubs.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">No subscriptions yet</td>
+                  <td colSpan={10} className="px-4 py-8 text-center text-muted-foreground">No subscriptions yet</td>
                 </tr>
               )}
               {filteredSubs.map((s) => (
@@ -569,9 +676,15 @@ export default function SubscriptionsTab() {
                       )}
                     </div>
                   </td>
-                  <td className="px-4 py-3 font-medium">{fmtCurrency(s.totalPrice)}</td>
-                  <td className="px-4 py-3 text-success">{fmtCurrency(s.paidAmount)}</td>
-                  <td className="px-4 py-3 text-warning">{fmtCurrency(s.totalPrice - s.paidAmount)}</td>
+                  <td className="px-4 py-3">
+                    <div className="font-medium">{fmtCurrency(s.totalPrice, s.currency ?? BASE_CURRENCY)}</div>
+                    {s.currency && s.currency !== BASE_CURRENCY && (
+                      <div className="text-xs text-muted-foreground">@ {(s.exchangeRate ?? 1).toFixed(4)}</div>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 font-medium">{fmtCurrency(s.baseTotalPrice ?? s.totalPrice, BASE_CURRENCY)}</td>
+                  <td className="px-4 py-3 text-success">{fmtCurrency(s.paidAmount ?? 0, BASE_CURRENCY)}</td>
+                  <td className="px-4 py-3 text-warning">{fmtCurrency((s.baseTotalPrice ?? s.totalPrice) - (s.paidAmount ?? 0), BASE_CURRENCY)}</td>
                   <td className="px-4 py-3 text-muted-foreground text-xs">
                     {fmtDate(s.startDate)} <ChevronRight className="inline w-3 h-3" /> {fmtDate(s.endDate)}
                   </td>

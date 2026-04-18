@@ -1,10 +1,36 @@
 // Shared types for Finance module
+
+export type SupportedCurrency = 'EGP' | 'USD' | 'SAR' | 'EUR' | 'GBP' | 'AED';
+
+export const CURRENCY_SYMBOLS: Record<SupportedCurrency, string> = {
+  EGP: 'E£',
+  USD: '$',
+  SAR: 'SR',
+  EUR: '€',
+  GBP: '£',
+  AED: 'AED',
+};
+
+export const CURRENCY_NAMES: Record<SupportedCurrency, string> = {
+  EGP: 'Egyptian Pound',
+  USD: 'US Dollar',
+  SAR: 'Saudi Riyal',
+  EUR: 'Euro',
+  GBP: 'British Pound',
+  AED: 'UAE Dirham',
+};
+
+export const BASE_CURRENCY: SupportedCurrency = 'EGP';
+
 export interface Subscription {
   _id: string;
   clientId: string;
   clientName: string;
   planType: "monthly" | "quarterly" | "semi_annual";
   totalPrice: number;
+  currency: SupportedCurrency;
+  exchangeRate: number;
+  baseTotalPrice: number;
   startDate: string;
   endDate: string;
   status: "pending" | "active" | "completed" | "cancelled";
@@ -23,7 +49,10 @@ export interface Installment {
   clientId: string;
   clientName: string;
   amount: number;
-  paidAmount: number;
+  currency: SupportedCurrency;
+  exchangeRate: number;
+  baseAmount: number;
+  paidAmount: number; // Always in base currency
   dueDate: string;
   status: "pending" | "paid" | "overdue" | "partially_paid";
   installmentNumber: number;
@@ -39,6 +68,9 @@ export interface Payment {
   clientId: string;
   clientName: string;
   amount: number;
+  currency: SupportedCurrency;
+  exchangeRate: number;
+  baseAmount: number;
   paymentDate: string;
   method: "cash" | "bank_transfer" | "credit_card" | "cheque" | "online";
   reference?: string;
@@ -53,6 +85,9 @@ export interface Revenue {
   clientId: string;
   clientName: string;
   amount: number;
+  currency: SupportedCurrency;
+  exchangeRate: number;
+  baseAmount: number;
   recognitionDate: string;
   status: "pending" | "recognized" | "cancelled";
   periodMonth: number;
@@ -63,6 +98,9 @@ export interface Revenue {
 export interface Expense {
   _id: string;
   amount: number;
+  currency: SupportedCurrency;
+  exchangeRate: number;
+  baseAmount: number;
   category: string;
   date: string;
   description: string;
@@ -120,10 +158,27 @@ export const CATEGORY_LABELS: Record<string, string> = {
   other: "Other",
 };
 
-export function fmtCurrency(n: number): string {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n);
+export function fmtCurrency(n: number, currency: SupportedCurrency = BASE_CURRENCY): string {
+  return new Intl.NumberFormat("en-US", { 
+    style: "currency", 
+    currency: currency,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0 
+  }).format(n);
+}
+
+export function fmtBaseCurrency(n: number): string {
+  return fmtCurrency(n, BASE_CURRENCY);
 }
 
 export function fmtDate(d: string | Date): string {
   return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(new Date(d));
+}
+
+/**
+ * Calculate base currency amount from original amount and exchange rate.
+ * Same logic as backend: amount * exchangeRate, rounded to 2 decimal places.
+ */
+export function calculateBaseAmount(amount: number, exchangeRate: number): number {
+  return Math.round(amount * exchangeRate * 100) / 100;
 }

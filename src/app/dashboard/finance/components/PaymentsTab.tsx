@@ -3,7 +3,7 @@ import { useEffect, useState, useMemo } from "react";
 import { z } from "zod";
 import api from "@/lib/api";
 import { toast$, financeToast } from "@/lib/toast";
-import { paymentAmountSchema, roundCents, parseFinancialInput } from "@/lib/finance-validation";
+import { paymentAmountSchema, roundCents, parseFinancialInput, currencySchema, exchangeRateSchema, calculateBaseAmount, type SupportedCurrency, BASE_CURRENCY } from "@/lib/finance-validation";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,13 +11,15 @@ import { Badge } from "@/components/ui/badge";
 import { PageLoader } from "@/components/ui/loading";
 import * as Dialog from "@radix-ui/react-dialog";
 import { Plus, X, FileDown } from "lucide-react";
-import { Payment, Installment, METHOD_LABELS, fmtCurrency, fmtDate } from "./finance.types";
+import { Payment, Installment, METHOD_LABELS, fmtCurrency, fmtDate, CURRENCY_NAMES, type SupportedCurrency as TSupportedCurrency } from "./finance.types";
 import { FilterBar } from "@/components/finance/FilterBar";
 import { exportToExcel, fmtExcelCurrency, fmtExcelDate } from "@/lib/excel-export";
 
 const paymentSchema = z.object({
   installmentId: z.string().min(1, "Please select an installment"),
   amount: paymentAmountSchema,
+  currency: currencySchema,
+  exchangeRate: exchangeRateSchema,
   paymentDate: z.string().min(1, "Payment date is required"),
   method: z.enum(["cash", "bank_transfer", "credit_card", "cheque", "online"]),
 });
@@ -44,6 +46,8 @@ export default function PaymentsTab() {
     clientId: "",
     clientName: "",
     amount: "",
+    currency: BASE_CURRENCY as string,
+    exchangeRate: "1",
     paymentDate: new Date().toISOString().slice(0, 10),
     method: "bank_transfer",
     reference: "",
@@ -56,6 +60,8 @@ export default function PaymentsTab() {
     clientId: "",
     clientName: "",
     amount: "",
+    currency: BASE_CURRENCY as string,
+    exchangeRate: "1",
     paymentDate: new Date().toISOString().slice(0, 10),
     method: "bank_transfer",
     reference: "",
@@ -125,6 +131,8 @@ export default function PaymentsTab() {
       installmentId: inst._id,
       subscriptionId: inst.subscriptionId,
       amount: String(parseFloat((inst.amount - inst.paidAmount).toFixed(2))),
+      currency: inst.currency,
+      exchangeRate: inst.exchangeRate.toFixed(4),
     }));
   };
 
@@ -132,9 +140,11 @@ export default function PaymentsTab() {
     e.preventDefault();
 
     const parsedAmount = parseFinancialInput(form.amount);
+    const parsedExchangeRate = parseFinancialInput(form.exchangeRate);
     const parsed = paymentSchema.safeParse({
       ...form,
       amount: isNaN(parsedAmount) ? undefined : parsedAmount,
+      exchangeRate: parsedExchangeRate,
     });
     if (!parsed.success) {
       const errs: Record<string, string> = {};
@@ -149,6 +159,7 @@ export default function PaymentsTab() {
       const res = await api.post("/finance/payments", {
         ...form,
         amount: roundCents(parsedAmount),
+        exchangeRate: Math.round(parsedExchangeRate * 10000) / 10000,
       });
       const overflow: number = res.data?.overflow ?? 0;
       setOpen(false);
@@ -204,11 +215,14 @@ export default function PaymentsTab() {
       title: 'Payments Report',
       columns: [
         { header: 'Customer', key: 'clientName', width: 20 },
-        { header: 'Amount', key: 'amount', width: 15, format: fmtExcelCurrency },
+        { header: 'Currency', key: 'currency', width: 10, format: (v) => v || BASE_CURRENCY },
+        { header: 'Amount (Orig)', key: 'amount', width: 15, format: fmtExcelCurrency },
+        { header: 'Exchange Rate', key: 'exchangeRate', width: 15, format: (v) => (v ?? 1).toFixed(4) },
+        { header: 'Amount (Base)', key: 'baseAmount', width: 15, format: (v, row) => fmtExcelCurrency(v ?? row.amount) },
         { header: 'Payment Date', key: 'paymentDate', width: 15, format: fmtExcelDate },
         { header: 'Method', key: 'method', width: 15, format: (v) => METHOD_LABELS[v] || v },
         { header: 'Reference', key: 'reference', width: 20, format: (v) => v || '—' },
-        { header: 'Overpayment', key: 'overpaymentAmount', width: 15, format: fmtExcelCurrency },
+        { header: 'Overpayment', key: 'overpaymentAmount', width: 15, format: (v) => fmtExcelCurrency(v ?? 0) },
         { header: 'Notes', key: 'notes', width: 30, format: (v) => v || '—' },
       ],
       data: filteredPayments,
@@ -358,9 +372,41 @@ export default function PaymentsTab() {
                   </div>
                 )}
 
+                {/* Currency & Exchange Rate */}
+                {selectedInstallment && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Currency</label>
+                      <select
+                        className="w-full h-9 rounded-md border border-input bg-muted px-3 text-sm cursor-not-allowed"
+                        value={form.currency}
+                        disabled
+                      >
+                        {Object.entries(CURRENCY_NAMES).map(([code, name]) => (
+                          <option key={code} value={code}>{code} - {name}</option>
+                        ))}
+                      </select>
+                      <p className="text-xs text-muted-foreground mt-1">From installment</p>
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                        Exchange Rate (to {BASE_CURRENCY})
+                      </label>
+                      <Input
+                        type="number"
+                        value={form.exchangeRate}
+                        disabled
+                        className="bg-muted cursor-not-allowed"
+                      />
+                      <p className="text-xs text-muted-foreground mt-1">From installment</p>
+                    </div>
+                  </div>
+                )}
+
                 <div>
                   <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
-                    Amount ($)
+                    Amount ({selectedInstallment ? form.currency : BASE_CURRENCY})
                     {selectedInstallment && (
                       <span className="ml-2 text-[10px] text-primary font-normal">(Auto-filled from installment)</span>
                     )}
@@ -387,9 +433,20 @@ export default function PaymentsTab() {
                     placeholder={selectedInstallment ? "Remaining amount" : "Payment amount"}
                   />
                   {fieldErrors.amount && <p className="text-xs text-destructive mt-1">{fieldErrors.amount}</p>}
+                  {!fieldErrors.amount && selectedInstallment && form.currency !== BASE_CURRENCY && (() => {
+                    const amount = parseFinancialInput(form.amount);
+                    const rate = parseFinancialInput(form.exchangeRate);
+                    if (!isNaN(amount) && !isNaN(rate) && amount > 0 && rate > 0) {
+                      return (
+                        <p className="text-xs text-muted-foreground mt-1">
+                          = {fmtCurrency(calculateBaseAmount(amount, rate), BASE_CURRENCY)} in base currency
+                        </p>
+                      );
+                    }
+                  })()}
                   {!fieldErrors.amount && selectedInstallment && parseFinancialInput(form.amount) > (selectedInstallment.amount - selectedInstallment.paidAmount) && (
                     <p className="text-xs text-warning mt-1">
-                      Overpayment: {fmtCurrency(roundCents(parseFinancialInput(form.amount) - (selectedInstallment.amount - selectedInstallment.paidAmount)))} will be applied to the next installment.
+                      Overpayment: {fmtCurrency(roundCents(parseFinancialInput(form.amount) - (selectedInstallment.amount - selectedInstallment.paidAmount)), form.currency as TSupportedCurrency)} will be applied to the next installment.
                     </p>
                   )}
                 </div>
@@ -452,7 +509,8 @@ export default function PaymentsTab() {
             <thead>
               <tr className="border-b border-border text-left text-xs text-muted-foreground">
                 <th className="px-4 py-3 font-medium">Customer</th>
-                <th className="px-4 py-3 font-medium">Amount</th>
+                <th className="px-4 py-3 font-medium">Amount (Orig.)</th>
+                <th className="px-4 py-3 font-medium">Amount (Base)</th>
                 <th className="px-4 py-3 font-medium">Date</th>
                 <th className="px-4 py-3 font-medium">Method</th>
                 <th className="px-4 py-3 font-medium">Reference</th>
@@ -462,13 +520,19 @@ export default function PaymentsTab() {
             <tbody className="divide-y divide-border">
               {filteredPayments.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">No payments yet</td>
+                  <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">No payments yet</td>
                 </tr>
               )}
               {filteredPayments.map((p) => (
                 <tr key={p._id} className="hover:bg-muted/30 transition-colors">
                   <td className="px-4 py-3 font-medium">{p.clientName}</td>
-                  <td className="px-4 py-3 font-medium text-success">{fmtCurrency(p.amount)}</td>
+                  <td className="px-4 py-3">
+                    <div className="font-medium text-success">{fmtCurrency(p.amount, p.currency ?? BASE_CURRENCY)}</div>
+                    {p.currency && p.currency !== BASE_CURRENCY && (
+                      <div className="text-xs text-muted-foreground">@ {(p.exchangeRate ?? 1).toFixed(4)}</div>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 font-medium text-success">{fmtCurrency(p.baseAmount ?? p.amount, BASE_CURRENCY)}</td>
                   <td className="px-4 py-3 text-muted-foreground">{fmtDate(p.paymentDate)}</td>
                   <td className="px-4 py-3">
                     <Badge variant="secondary">{METHOD_LABELS[p.method]}</Badge>
@@ -476,7 +540,7 @@ export default function PaymentsTab() {
                   <td className="px-4 py-3 text-muted-foreground text-xs">{p.reference || "—"}</td>
                   <td className="px-4 py-3 text-xs">
                     {p.overpaymentAmount > 0 ? (
-                      <Badge variant="warning">{fmtCurrency(p.overpaymentAmount)} overflow</Badge>
+                      <Badge variant="warning">{fmtCurrency(p.overpaymentAmount, p.currency ?? BASE_CURRENCY)} overflow</Badge>
                     ) : "—"}
                   </td>
                 </tr>

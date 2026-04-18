@@ -10,12 +10,15 @@ import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, A
 import api from "@/lib/api";
 import { toast } from "sonner";
 import { DollarSign, Calendar, Upload, Check, Loader2, TrendingUp, TrendingDown, ChevronDown, ChevronUp, Search, Filter, Receipt } from "lucide-react";
+import { BASE_CURRENCY } from "@/app/dashboard/finance/components/finance.types";
 
 interface Employee {
   _id: string;
   employeeId: string;
   baseSalary: number;
   maxKpi: number;
+  currency?: string;
+  exchangeRate?: number;
   userId: { _id: string; name: string; email: string };
 }
 
@@ -353,11 +356,16 @@ export default function PayrollPage() {
                     <div className="space-y-2">
                       <div className="flex justify-between text-sm">
                         <span className="text-muted-foreground">Base Salary</span>
-                        <span className="font-medium">${emp.baseSalary.toLocaleString()}</span>
+                        <span className="font-medium">
+                          {emp.baseSalary.toLocaleString()} {emp.currency || BASE_CURRENCY}
+                          {emp.currency && emp.currency !== BASE_CURRENCY && emp.exchangeRate && (
+                            <span className="text-xs text-muted-foreground ml-1">(@{emp.exchangeRate})</span>
+                          )}
+                        </span>
                       </div>
                       <div className="flex justify-between text-base font-bold pt-2 border-t">
                         <span>Net Salary</span>
-                        <span className="text-primary">${netSalary.toLocaleString()}</span>
+                        <span className="text-primary">{existingPayroll?.netSalary ? `${existingPayroll.netSalary.toLocaleString()} ${BASE_CURRENCY}` : `${netSalary.toLocaleString()} ${emp.currency || BASE_CURRENCY}`}</span>
                       </div>
                     </div>
 
@@ -429,29 +437,29 @@ export default function PayrollPage() {
                       <div className="bg-muted/50 rounded-lg p-3 space-y-1.5 text-xs">
                         <div className="flex justify-between">
                           <span className="text-muted-foreground">Base Salary:</span>
-                          <span>${emp.baseSalary.toLocaleString()}</span>
+                          <span>{emp.baseSalary.toLocaleString()} {emp.currency || BASE_CURRENCY}</span>
                         </div>
                         {data.bonus > 0 && (
                           <div className="flex justify-between text-success">
                             <span>+ Bonus:</span>
-                            <span>+${data.bonus.toLocaleString()}</span>
+                            <span>+{data.bonus.toLocaleString()} {emp.currency || BASE_CURRENCY}</span>
                           </div>
                         )}
                         {data.deduction > 0 && (
                           <div className="flex justify-between text-destructive">
                             <span>- Deduction:</span>
-                            <span>-${data.deduction.toLocaleString()}</span>
+                            <span>-{data.deduction.toLocaleString()} {emp.currency || BASE_CURRENCY}</span>
                           </div>
                         )}
                         {kpiAmount > 0 && (
                           <div className="flex justify-between text-primary">
                             <span>+ KPI ({data.kpiPercentage}%):</span>
-                            <span>+${kpiAmount.toFixed(2)}</span>
+                            <span>+{kpiAmount.toFixed(2)} {emp.currency || BASE_CURRENCY}</span>
                           </div>
                         )}
                         <div className="flex justify-between font-bold text-sm pt-2 border-t border-border">
                           <span>Total:</span>
-                          <span className="text-primary">${netSalary.toLocaleString()}</span>
+                          <span className="text-primary">{netSalary.toLocaleString()} {emp.currency || BASE_CURRENCY}</span>
                         </div>
                       </div>
 
