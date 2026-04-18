@@ -562,7 +562,7 @@ export default function SubscriptionsTab() {
                       <span className="text-xs font-medium text-muted-foreground">
                         {s.totalInstallmentsCount ?? 0}
                       </span>
-                      {s.paidInstallmentsCount === s.totalInstallmentsCount && s.totalInstallmentsCount > 0 && (
+                      {(s.paidInstallmentsCount ?? 0) === (s.totalInstallmentsCount ?? 0) && (s.totalInstallmentsCount ?? 0) > 0 && (
                         <Badge variant="secondary" className="ml-1 text-[10px] h-4 px-1.5 bg-emerald-100 text-emerald-700 border-emerald-200">
                           ✓
                         </Badge>

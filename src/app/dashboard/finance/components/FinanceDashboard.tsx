@@ -111,7 +111,7 @@ const chartOptions = {
       padding: 12,
       displayColors: true,
       bodyFont: { size: 12 },
-      titleFont: { size: 13, weight: 'bold' },
+      titleFont: { size: 13, weight: 700 },
     }
   },
   scales: {

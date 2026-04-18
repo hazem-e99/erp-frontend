@@ -85,7 +85,7 @@ const chartOptions = {
       padding: 12,
       displayColors: true,
       bodyFont: { size: 12 },
-      titleFont: { size: 13, weight: 'bold' },
+      titleFont: { size: 13, weight: 700 },
     }
   },
   scales: {
@@ -208,9 +208,9 @@ export default function ReportsTab() {
 
   // Subscription Status Donut Data
   const statusChartData = {
-    labels: statusPieData.map(s => s.name),
+    labels: statusPieData.map((s: { name: string; value: number }) => s.name),
     datasets: [{
-      data: statusPieData.map(s => s.value),
+      data: statusPieData.map((s: { name: string; value: number }) => s.value),
       backgroundColor: chartColors,
       borderColor: '#ffffff',
       borderWidth: 2,

@@ -58,8 +58,7 @@ export function financialAmountSchema(options?: FinancialAmountOptions) {
 
   const base = z
     .number({
-      required_error: `${label} is required`,
-      invalid_type_error: `${label} must be a valid number`,
+      message: `${label} must be a valid number`,
     })
     .refine((v) => isFinite(v), {
       message: `${label} must be a finite number`,
