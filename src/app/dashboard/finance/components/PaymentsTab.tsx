@@ -303,12 +303,17 @@ export default function PaymentsTab() {
                     </span>
                   </label>
                   <select
-                    className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm"
+                    className={`w-full h-9 rounded-md border border-input bg-background px-3 text-sm ${
+                      clients.length === 0 ? "opacity-60 cursor-not-allowed" : ""
+                    }`}
                     value={selectedClientId}
                     required
+                    disabled={clients.length === 0}
                     onChange={(e) => handleSelectClient(e.target.value)}
                   >
-                    <option value="">Choose client...</option>
+                    <option value="">
+                      {clients.length === 0 ? "You must add clients first" : "Choose client..."}
+                    </option>
                     {clients.map((c) => (
                       <option key={c._id} value={c._id}>{c.name ?? c.company}</option>
                     ))}

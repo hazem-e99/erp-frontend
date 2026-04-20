@@ -310,30 +310,25 @@ export default function SubscriptionsTab() {
                 {/* Client */}
                 <div>
                   <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Client</label>
-                  {clients.length > 0 ? (
-                    <select
-                      className={`w-full h-9 rounded-md border bg-background px-3 text-sm ${
-                        fieldErrors.clientId ? "border-destructive" : "border-input"
-                      }`}
-                      value={form.clientId}
-                      onChange={(e) => {
-                        const c = clients.find((x) => x._id === e.target.value);
-                        setForm((f) => ({ ...f, clientId: e.target.value, clientName: c?.name ?? c?.company ?? "" }));
-                        if (e.target.value) setFieldErrors((fe) => ({ ...fe, clientId: "" }));
-                      }}
-                    >
-                      <option value="">Select client...</option>
-                      {clients.map((c) => (
-                        <option key={c._id} value={c._id}>{c.name ?? c.company}</option>
-                      ))}
-                    </select>
-                  ) : (
-                    <Input
-                      placeholder="Client name"
-                      value={form.clientName}
-                      onChange={(e) => setField("clientName", e.target.value)}
-                    />
-                  )}
+                  <select
+                    className={`w-full h-9 rounded-md border bg-background px-3 text-sm ${
+                      fieldErrors.clientId ? "border-destructive" : "border-input"
+                    } ${clients.length === 0 ? "opacity-60 cursor-not-allowed" : ""}`}
+                    value={form.clientId}
+                    disabled={clients.length === 0}
+                    onChange={(e) => {
+                      const c = clients.find((x) => x._id === e.target.value);
+                      setForm((f) => ({ ...f, clientId: e.target.value, clientName: c?.name ?? c?.company ?? "" }));
+                      if (e.target.value) setFieldErrors((fe) => ({ ...fe, clientId: "" }));
+                    }}
+                  >
+                    <option value="">
+                      {clients.length === 0 ? "You must add clients first" : "Select client..."}
+                    </option>
+                    {clients.map((c) => (
+                      <option key={c._id} value={c._id}>{c.name ?? c.company}</option>
+                    ))}
+                  </select>
                   {fieldErrors.clientId && <p className="text-xs text-destructive mt-1">{fieldErrors.clientId}</p>}
                 </div>
 

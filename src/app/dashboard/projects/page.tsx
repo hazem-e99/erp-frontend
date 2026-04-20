@@ -86,8 +86,18 @@ export default function ProjectsPage() {
           <CardContent>
             <form onSubmit={handleSave} className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Input placeholder="Project Name *" value={form.name} onChange={(e) => setForm({...form, name: e.target.value})} required />
-              <select className="h-10 rounded-lg border border-input bg-card px-3 text-sm" value={form.clientId} onChange={(e) => setForm({...form, clientId: e.target.value})} required>
-                <option value="">Select Client *</option>
+              <select 
+                className={`h-10 rounded-lg border border-input bg-card px-3 text-sm ${
+                  clients.length === 0 ? "opacity-60 cursor-not-allowed" : ""
+                }`} 
+                value={form.clientId} 
+                onChange={(e) => setForm({...form, clientId: e.target.value})} 
+                disabled={clients.length === 0}
+                required
+              >
+                <option value="">
+                  {clients.length === 0 ? "You must add clients first" : "Select Client *"}
+                </option>
                 {clients.map(c => <option key={c._id} value={c._id}>{c.name}</option>)}
               </select>
               <select className="h-10 rounded-lg border border-input bg-card px-3 text-sm" value={form.status} onChange={(e) => setForm({...form, status: e.target.value})}>

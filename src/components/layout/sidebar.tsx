@@ -7,7 +7,7 @@ import {
   LayoutDashboard, Users, Briefcase, FolderKanban, CheckSquare,
   Clock, CalendarOff, DollarSign, Shield, ChevronLeft,
   ChevronRight, Sparkles, UserCircle, Megaphone, Bell, BarChart3,
-  Receipt, FileText,
+  Receipt, FileText, Database,
 } from "lucide-react";
 
 const navItems = [
@@ -26,6 +26,7 @@ const navItems = [
   { label: "Announcements",href: "/dashboard/announcements",  icon: Megaphone,       permission: "announcements:send" },
   { label: "Audit Log",    href: "/dashboard/audit",          icon: FileText,        permission: "audit:read" },
   { label: "Roles & Access",href: "/dashboard/roles",         icon: Shield,          permission: "roles:read" },
+  { label: "DB Backup",    href: "/dashboard/settings/backup",icon: Database,        permission: "backup:export" },
 ];
 
 export function Sidebar() {
