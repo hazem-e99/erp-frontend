@@ -22,7 +22,7 @@ import {
   DollarSign, TrendingUp, TrendingDown, AlertTriangle,
   CreditCard, Activity, Users, Wifi, FileDown, Loader2,
 } from "lucide-react";
-import { DashboardSummary, fmtCurrency } from "./finance.types";
+import { DashboardSummary, fmtCurrency, FinancePeriodFilters, buildPeriodQuery } from "./finance.types";
 import { PageLoader } from "@/components/ui/loading";
 import { exportCompleteFinanceReport } from "@/lib/excel-export";
 import { toast } from "sonner";
@@ -132,7 +132,11 @@ const chartOptions = {
   }
 };
 
-export default function FinanceDashboard() {
+interface FinanceDashboardProps {
+  filters: FinancePeriodFilters;
+}
+
+export default function FinanceDashboard({ filters }: FinanceDashboardProps) {
   const [data, setData] = useState<DashboardSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [wsConnected, setWsConnected] = useState(false);
@@ -141,7 +145,8 @@ export default function FinanceDashboard() {
 
   const fetchDashboard = async () => {
     try {
-      const res = await api.get("/finance/reports/dashboard");
+      const query = buildPeriodQuery(filters);
+      const res = await api.get("/finance/reports/dashboard", { params: query });
       setData(res.data);
     } catch (e) {
       console.error("Dashboard fetch error:", e);
@@ -194,15 +199,15 @@ export default function FinanceDashboard() {
 
   useEffect(() => {
     fetchDashboard();
+  }, [filters]);
 
-    // WebSocket for real-time updates
+  useEffect(() => {
     const socket = io(`${WS_URL}/finance`, { transports: ["websocket"] });
     socketRef.current = socket;
 
     socket.on("connect", () => setWsConnected(true));
     socket.on("disconnect", () => setWsConnected(false));
 
-    // Refresh dashboard on any finance event
     const refresh = () => fetchDashboard();
     socket.on("payment:created", refresh);
     socket.on("subscription:created", refresh);
@@ -222,6 +227,19 @@ export default function FinanceDashboard() {
     ...d,
     period: d.period.slice(5), // "2024-03" → "03"
   }));
+
+  const periodLabel = (() => {
+    if (filters.preset === "specificMonth") {
+      return new Date(filters.year, filters.month - 1, 1).toLocaleString("en-US", { month: "short", year: "numeric" });
+    }
+    if (filters.preset === "custom") {
+      return filters.startDate && filters.endDate ? `${filters.startDate} to ${filters.endDate}` : "Custom";
+    }
+    if (filters.preset === "thisMonth") return "This Month";
+    if (filters.preset === "last30") return "Last 30 Days";
+    if (filters.preset === "last90") return "Last 90 Days";
+    return "YTD";
+  })();
 
   // Cash Flow Area Chart Data
   const cashFlowAreaData = {
@@ -340,20 +358,20 @@ export default function FinanceDashboard() {
       {/* KPI metrics */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <MetricCard
-          title="Total Cash In (YTD)"
+          title={`Total Cash In (${periodLabel})`}
           value={fmtCurrency(data.totalCashIn)}
           icon={DollarSign}
           trend="up"
           color="text-success"
         />
         <MetricCard
-          title="Total Cash Out (YTD)"
+          title={`Total Cash Out (${periodLabel})`}
           value={fmtCurrency(data.totalCashOut)}
           icon={TrendingDown}
           color="text-destructive"
         />
         <MetricCard
-          title="Net Profit (YTD)"
+          title={`Net Profit (${periodLabel})`}
           value={fmtCurrency(data.netProfit)}
           icon={Activity}
           color={data.netProfit >= 0 ? "text-success" : "text-destructive"}
@@ -362,7 +380,7 @@ export default function FinanceDashboard() {
           title="Recognized Revenue"
           value={fmtCurrency(data.recognizedRevenueThisMonth)}
           icon={TrendingUp}
-          sub="This month"
+          sub={periodLabel}
           color="text-primary"
         />
       </div>

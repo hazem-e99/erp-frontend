@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { PageLoader } from "@/components/ui/loading";
 import * as Dialog from "@radix-ui/react-dialog";
 import { Plus, Trash2, X, Paperclip, FileDown } from "lucide-react";
-import { Expense, CATEGORY_LABELS, fmtCurrency, fmtDate, CURRENCY_NAMES, type SupportedCurrency as TSupportedCurrency } from "./finance.types";
+import { Expense, CATEGORY_LABELS, fmtCurrency, fmtDate, CURRENCY_NAMES, type SupportedCurrency as TSupportedCurrency, FinancePeriodFilters, buildPeriodQuery } from "./finance.types";
 import { FilterBar } from "@/components/finance/FilterBar";
 import { exportToExcel, fmtExcelCurrency, fmtExcelDate } from "@/lib/excel-export";
 
@@ -29,7 +29,11 @@ const expenseSchema = z.object({
 
 const CATEGORIES = Object.keys(CATEGORY_LABELS);
 
-export default function ExpensesTab() {
+interface ExpensesTabProps {
+  filters: FinancePeriodFilters;
+}
+
+export default function ExpensesTab({ filters: periodFilters }: ExpensesTabProps) {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -41,6 +45,10 @@ export default function ExpensesTab() {
   const [fileName, setFileName] = useState("");
   const [pendingSalaries, setPendingSalaries] = useState<number>(0);
   const LIMIT = 25;
+  const periodQuery = useMemo(
+    () => buildPeriodQuery(periodFilters),
+    [periodFilters.preset, periodFilters.month, periodFilters.year, periodFilters.startDate, periodFilters.endDate],
+  );
 
   const [form, setForm] = useState({
     amount: "",
@@ -56,19 +64,19 @@ export default function ExpensesTab() {
   const fetch = async () => {
     setLoading(true);
     try {
-      const res = await api.get("/finance/expenses", { params: { page, limit: LIMIT } });
+      const res = await api.get("/finance/expenses", { params: { page, limit: LIMIT, ...periodQuery } });
       setExpenses(res.data.data ?? []);
       setTotal(res.data.total ?? 0);
     } catch (e) { console.error(e); }
     setLoading(false);
   };
 
-  useEffect(() => { fetch(); }, [page]);
+  useEffect(() => { fetch(); }, [page, periodQuery]);
 
   // Fetch pending salaries when category is "salaries"
   useEffect(() => {
     if (form.category === "salaries") {
-      api.get("/payroll/pending-expenses-amount")
+      api.get("/payroll/pending-expenses-amount", { params: periodQuery })
         .then(res => {
           const amount = res.data.total || 0;
           setPendingSalaries(amount);
@@ -78,7 +86,7 @@ export default function ExpensesTab() {
         })
         .catch(e => console.error("Failed to fetch pending salaries:", e));
     }
-  }, [form.category]);
+  }, [form.category, periodQuery]);
 
   const setField = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
 

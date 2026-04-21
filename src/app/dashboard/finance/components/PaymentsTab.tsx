@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { PageLoader } from "@/components/ui/loading";
 import * as Dialog from "@radix-ui/react-dialog";
 import { Plus, X, FileDown } from "lucide-react";
-import { Payment, Installment, METHOD_LABELS, fmtCurrency, fmtDate, CURRENCY_NAMES, type SupportedCurrency as TSupportedCurrency } from "./finance.types";
+import { Payment, Installment, METHOD_LABELS, fmtCurrency, fmtDate, CURRENCY_NAMES, type SupportedCurrency as TSupportedCurrency, FinancePeriodFilters, buildPeriodQuery } from "./finance.types";
 import { FilterBar } from "@/components/finance/FilterBar";
 import { exportToExcel, fmtExcelCurrency, fmtExcelDate } from "@/lib/excel-export";
 
@@ -26,7 +26,11 @@ const paymentSchema = z.object({
 
 const METHODS = ["cash", "bank_transfer", "credit_card", "cheque", "online"];
 
-export default function PaymentsTab() {
+interface PaymentsTabProps {
+  filters: FinancePeriodFilters;
+}
+
+export default function PaymentsTab({ filters: periodFilters }: PaymentsTabProps) {
   const [payments, setPayments] = useState<Payment[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -39,6 +43,10 @@ export default function PaymentsTab() {
   const [selectedClientId, setSelectedClientId] = useState("");
   const [page, setPage] = useState(1);
   const LIMIT = 25;
+  const periodQuery = useMemo(
+    () => buildPeriodQuery(periodFilters),
+    [periodFilters.preset, periodFilters.month, periodFilters.year, periodFilters.startDate, periodFilters.endDate],
+  );
 
   const [form, setForm] = useState({
     subscriptionId: "",
@@ -73,7 +81,7 @@ export default function PaymentsTab() {
   const fetch = async () => {
     setLoading(true);
     try {
-      const res = await api.get("/finance/payments", { params: { page, limit: LIMIT } });
+      const res = await api.get("/finance/payments", { params: { page, limit: LIMIT, ...periodQuery } });
       setPayments(res.data.data ?? []);
       setTotal(res.data.total ?? 0);
     } catch (e) { console.error(e); }
@@ -106,7 +114,7 @@ export default function PaymentsTab() {
     setLoadingInstallments(false);
   };
 
-  useEffect(() => { fetch(); }, [page]);
+  useEffect(() => { fetch(); }, [page, periodQuery]);
 
   const setField = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
 

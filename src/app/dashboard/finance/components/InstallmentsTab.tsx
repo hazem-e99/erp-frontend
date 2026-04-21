@@ -6,13 +6,17 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { PageLoader } from "@/components/ui/loading";
 import { Bell, FileDown } from "lucide-react";
-import { Installment, STATUS_VARIANT, fmtCurrency, fmtDate } from "./finance.types";
+import { Installment, STATUS_VARIANT, fmtCurrency, fmtDate, FinancePeriodFilters, buildPeriodQuery } from "./finance.types";
 import { FilterBar } from "@/components/finance/FilterBar";
 import { exportToExcel, fmtExcelCurrency, fmtExcelDate } from "@/lib/excel-export";
 
 const STATUS_FILTERS = ["all", "pending", "overdue", "paid", "partially_paid"];
 
-export default function InstallmentsTab() {
+interface InstallmentsTabProps {
+  filters: FinancePeriodFilters;
+}
+
+export default function InstallmentsTab({ filters: periodFilters }: InstallmentsTabProps) {
   const [installments, setInstallments] = useState<Installment[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -20,11 +24,15 @@ export default function InstallmentsTab() {
   const [page, setPage] = useState(1);
   const LIMIT = 25;
   const [filters, setFilters] = useState<Record<string, any>>({});
+  const periodQuery = useMemo(
+    () => buildPeriodQuery(periodFilters),
+    [periodFilters.preset, periodFilters.month, periodFilters.year, periodFilters.startDate, periodFilters.endDate],
+  );
 
   const fetch = async () => {
     setLoading(true);
     try {
-      const params: Record<string, any> = { page, limit: LIMIT };
+      const params: Record<string, any> = { page, limit: LIMIT, ...periodQuery };
       if (statusFilter !== "all") params.status = statusFilter;
       const res = await api.get("/finance/installments", { params });
       setInstallments(res.data.data ?? []);
@@ -33,7 +41,7 @@ export default function InstallmentsTab() {
     setLoading(false);
   };
 
-  useEffect(() => { fetch(); }, [statusFilter, page]);
+  useEffect(() => { fetch(); }, [statusFilter, page, periodQuery]);
 
   const isOverdue = (inst: Installment) =>
     inst.status === "overdue" || (inst.status === "pending" && new Date(inst.dueDate) < new Date());

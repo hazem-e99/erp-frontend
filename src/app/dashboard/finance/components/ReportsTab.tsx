@@ -19,8 +19,8 @@ import {
   Filler,
 } from 'chart.js';
 import { Line, Bar, Doughnut, Pie } from 'react-chartjs-2';
-import { fmtCurrency, fmtDate, Installment } from "./finance.types";
-import { TrendingUp, TrendingDown, DollarSign, AlertTriangle, BarChart3, PieChart as PieChartIcon, TrendingUpIcon, FileDown } from "lucide-react";
+import { fmtCurrency, fmtDate, Installment, FinancePeriodFilters, buildPeriodQuery } from "./finance.types";
+import { TrendingUp, TrendingDown, DollarSign, AlertTriangle, BarChart3, PieChart as PieChartIcon, TrendingUpIcon, FileDown, Search, Filter } from "lucide-react";
 import { exportToExcel, fmtExcelCurrency, fmtExcelDate } from "@/lib/excel-export";
 
 // Register Chart.js components
@@ -37,18 +37,22 @@ ChartJS.register(
   Filler
 );
 
-// Calm, muted color palette
+interface ReportsTabProps {
+  filters: FinancePeriodFilters;
+}
+
+// Theme-aligned palette
 const CALM_COLORS = {
-  primary: "rgba(99, 102, 241, 0.8)",      // Indigo
-  primaryLight: "rgba(99, 102, 241, 0.2)",
-  success: "rgba(139, 92, 246, 0.8)",      // Purple
-  successLight: "rgba(139, 92, 246, 0.2)",
-  danger: "rgba(236, 72, 153, 0.8)",       // Rose
-  dangerLight: "rgba(236, 72, 153, 0.2)",
+  primary: "rgba(63, 16, 82, 0.85)",
+  primaryLight: "rgba(63, 16, 82, 0.18)",
+  success: "rgba(34, 197, 94, 0.85)",
+  successLight: "rgba(34, 197, 94, 0.2)",
+  danger: "rgba(239, 68, 68, 0.85)",
+  dangerLight: "rgba(239, 68, 68, 0.2)",
   warning: "rgba(245, 158, 11, 0.8)",      // Amber
   warningLight: "rgba(245, 158, 11, 0.2)",
-  info: "rgba(6, 182, 212, 0.8)",          // Cyan
-  infoLight: "rgba(6, 182, 212, 0.2)",
+  info: "rgba(100, 116, 139, 0.85)",
+  infoLight: "rgba(100, 116, 139, 0.2)",
   gray: "rgba(148, 163, 184, 0.8)",
 };
 
@@ -58,9 +62,9 @@ const chartColors = [
   CALM_COLORS.warning,
   CALM_COLORS.info,
   CALM_COLORS.danger,
-  "rgba(167, 139, 250, 0.8)", // Light purple
-  "rgba(125, 211, 252, 0.8)", // Light cyan
-  "rgba(192, 132, 252, 0.8)", // Light pink
+  "rgba(82, 20, 105, 0.75)",
+  "rgba(148, 163, 184, 0.8)",
+  "rgba(156, 163, 175, 0.8)",
 ];
 
 const chartOptions = {
@@ -100,23 +104,32 @@ const chartOptions = {
   }
 };
 
-export default function ReportsTab() {
+export default function ReportsTab({ filters }: ReportsTabProps) {
   const [pnl, setPnl] = useState<any>(null);
   const [cashFlow, setCashFlow] = useState<any[]>([]);
   const [revenueReport, setRevenueReport] = useState<any[]>([]);
   const [outstanding, setOutstanding] = useState<Installment[]>([]);
   const [subMetrics, setSubMetrics] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
 
   const fetchAll = async () => {
     setLoading(true);
     try {
+      const params = buildPeriodQuery(filters);
+      const outstandingParams = {
+        ...params,
+        ...(statusFilter !== "all" ? { status: statusFilter } : {}),
+        ...(search.trim() ? { search: search.trim() } : {}),
+      };
+
       const [pnlRes, cfRes, outRes, subRes, revRes] = await Promise.all([
-        api.get("/finance/reports/profit-loss"),
-        api.get("/finance/reports/cash-flow"),
-        api.get("/finance/reports/outstanding-payments"),
-        api.get("/finance/reports/subscription-metrics"),
-        api.get("/finance/reports/revenue").catch(() => ({ data: [] })),
+        api.get("/finance/reports/profit-loss", { params }),
+        api.get("/finance/reports/cash-flow", { params }),
+        api.get("/finance/reports/outstanding-payments", { params: outstandingParams }),
+        api.get("/finance/reports/subscription-metrics", { params }),
+        api.get("/finance/reports/revenue", { params }).catch(() => ({ data: [] })),
       ]);
       setPnl(pnlRes.data);
       setCashFlow(cfRes.data);
@@ -127,7 +140,7 @@ export default function ReportsTab() {
     setLoading(false);
   };
 
-  useEffect(() => { fetchAll(); }, []);
+  useEffect(() => { fetchAll(); }, [filters, statusFilter, search]);
 
   // Export comprehensive report to Excel
   const handleExportReport = async () => {
@@ -239,8 +252,8 @@ export default function ReportsTab() {
       backgroundColor: (context: any) => {
         const ctx = context.chart.ctx;
         const gradient = ctx.createLinearGradient(0, 0, 0, 280);
-        gradient.addColorStop(0, 'rgba(99, 102, 241, 0.3)');
-        gradient.addColorStop(1, 'rgba(99, 102, 241, 0.01)');
+        gradient.addColorStop(0, 'rgba(63, 16, 82, 0.25)');
+        gradient.addColorStop(1, 'rgba(63, 16, 82, 0.01)');
         return gradient;
       },
       borderColor: CALM_COLORS.primary,
@@ -268,49 +281,90 @@ export default function ReportsTab() {
     }],
   };
 
+  const periodLabel = (() => {
+    if (filters.preset === "specificMonth") {
+      return new Date(filters.year, filters.month - 1, 1).toLocaleString("en-US", { month: "long", year: "numeric" });
+    }
+    if (filters.preset === "custom") {
+      return filters.startDate && filters.endDate ? `${filters.startDate} - ${filters.endDate}` : "Custom range";
+    }
+    if (filters.preset === "thisMonth") return "This Month";
+    if (filters.preset === "last30") return "Last 30 Days";
+    if (filters.preset === "last90") return "Last 90 Days";
+    return "Year To Date";
+  })();
+
   return (
     <div className="space-y-6">
-      {/* Export Button */}
-      <div className="flex justify-end">
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={handleExportReport}
-          disabled={!pnl && outstanding.length === 0}
-        >
-          <FileDown className="w-4 h-4 mr-1" />
-          Export Report to Excel
-        </Button>
+      <div className="flex flex-col lg:flex-row gap-3 lg:items-center lg:justify-between">
+        <div className="text-sm text-muted-foreground font-medium">
+          <span className="text-primary font-semibold">Reporting Period:</span> {periodLabel}
+        </div>
+        <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto">
+          <div className="relative w-full sm:w-64">
+            <Search className="w-4 h-4 text-muted-foreground absolute left-3 top-2.5" />
+            <input
+              type="text"
+              className="w-full h-9 rounded-md border border-input bg-background pl-9 pr-3 text-sm"
+              placeholder="Filter by customer name"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+          <div className="relative w-full sm:w-48">
+            <Filter className="w-4 h-4 text-muted-foreground absolute left-3 top-2.5" />
+            <select
+              className="w-full h-9 rounded-md border border-input bg-background pl-9 pr-3 text-sm"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+            >
+              <option value="all">All statuses</option>
+              <option value="pending">Pending</option>
+              <option value="overdue">Overdue</option>
+              <option value="partially_paid">Partially Paid</option>
+            </select>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleExportReport}
+            disabled={!pnl && outstanding.length === 0}
+            className="border-primary/30 text-primary hover:bg-primary-light"
+          >
+            <FileDown className="w-4 h-4 mr-1" />
+            Export Report to Excel
+          </Button>
+        </div>
       </div>
 
       {/* P&L Summary Cards */}
       {pnl && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <Card className="bg-gradient-to-br from-slate-50 to-slate-100 border-slate-200">
+          <Card className="bg-linear-to-br from-primary-light to-background border-primary/20">
             <CardContent className="p-5">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-xs text-slate-600 mb-1 font-medium">Revenue (Recognized)</p>
-                  <p className="text-2xl font-bold text-slate-900">{fmtCurrency(pnl.revenue)}</p>
+                  <p className="text-xs text-primary mb-1 font-medium">Revenue (Recognized)</p>
+                  <p className="text-2xl font-bold text-foreground">{fmtCurrency(pnl.revenue)}</p>
                 </div>
-                <DollarSign className="w-8 h-8 text-slate-400 opacity-50" />
+                <DollarSign className="w-8 h-8 text-primary/40" />
               </div>
             </CardContent>
           </Card>
 
-          <Card className="bg-gradient-to-br from-blue-50 to-blue-100 border-blue-200">
+          <Card className="bg-linear-to-br from-muted to-background border-border">
             <CardContent className="p-5">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-xs text-blue-700 mb-1 font-medium">Total Expenses</p>
-                  <p className="text-2xl font-bold text-blue-900">{fmtCurrency(pnl.expenses)}</p>
+                  <p className="text-xs text-muted-foreground mb-1 font-medium">Total Expenses</p>
+                  <p className="text-2xl font-bold text-foreground">{fmtCurrency(pnl.expenses)}</p>
                 </div>
-                <BarChart3 className="w-8 h-8 text-blue-400 opacity-50" />
+                <BarChart3 className="w-8 h-8 text-muted-foreground/60" />
               </div>
             </CardContent>
           </Card>
 
-          <Card className={`bg-gradient-to-br border-2 ${pnl.profit >= 0 ? "from-emerald-50 to-emerald-100 border-emerald-200" : "from-rose-50 to-rose-100 border-rose-200"}`}>
+          <Card className={`bg-linear-to-br border-2 ${pnl.profit >= 0 ? "from-emerald-50 to-emerald-100 border-emerald-200" : "from-rose-50 to-rose-100 border-rose-200"}`}>
             <CardContent className="p-5">
               <div className="flex items-center justify-between">
                 <div>
@@ -323,18 +377,18 @@ export default function ReportsTab() {
             </CardContent>
           </Card>
 
-          <Card className="bg-gradient-to-br from-purple-50 to-purple-100 border-purple-200">
+          <Card className="bg-linear-to-br from-primary-light to-background border-primary/20">
             <CardContent className="p-5">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-xs text-purple-700 mb-1 font-medium">Profit Margin</p>
+                  <p className="text-xs text-primary mb-1 font-medium">Profit Margin</p>
                   <div className="flex items-center gap-1">
                     {pnl.margin >= 0 ? (
-                      <TrendingUp className="w-4 h-4 text-purple-600" />
+                      <TrendingUp className="w-4 h-4 text-primary" />
                     ) : (
-                      <TrendingDown className="w-4 h-4 text-purple-600" />
+                      <TrendingDown className="w-4 h-4 text-primary" />
                     )}
-                    <p className={`text-2xl font-bold text-purple-900`}>
+                    <p className="text-2xl font-bold text-foreground">
                       {pnl.margin}%
                     </p>
                   </div>
@@ -352,7 +406,7 @@ export default function ReportsTab() {
           <CardHeader className="pb-2">
             <CardTitle className="text-base flex items-center gap-2">
               <BarChart3 className="w-4 h-4 text-slate-600" />
-              Cash Flow (YTD)
+              Cash Flow ({periodLabel})
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -449,27 +503,27 @@ export default function ReportsTab() {
       {/* Subscription Metrics Cards */}
       {subMetrics && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Card className="bg-gradient-to-br from-indigo-50 to-indigo-100 border-indigo-200">
+          <Card className="bg-linear-to-br from-primary-light to-background border-primary/20">
             <CardContent className="p-5">
-              <p className="text-xs text-indigo-700 mb-2 font-medium">Active Subscriptions</p>
-              <p className="text-3xl font-bold text-indigo-900">{subMetrics.activeCount || 0}</p>
-              <p className="text-xs text-indigo-600 mt-2">Currently Active</p>
+              <p className="text-xs text-primary mb-2 font-medium">Active Subscriptions</p>
+              <p className="text-3xl font-bold text-foreground">{subMetrics.activeCount || 0}</p>
+              <p className="text-xs text-muted-foreground mt-2">Currently Active</p>
             </CardContent>
           </Card>
 
-          <Card className="bg-gradient-to-br from-cyan-50 to-cyan-100 border-cyan-200">
+          <Card className="bg-linear-to-br from-muted to-background border-border">
             <CardContent className="p-5">
-              <p className="text-xs text-cyan-700 mb-2 font-medium">Completed Subscriptions</p>
-              <p className="text-3xl font-bold text-cyan-900">{subMetrics.completedCount || 0}</p>
-              <p className="text-xs text-cyan-600 mt-2">Finished & Closed</p>
+              <p className="text-xs text-muted-foreground mb-2 font-medium">Completed Subscriptions</p>
+              <p className="text-3xl font-bold text-foreground">{subMetrics.completedCount || 0}</p>
+              <p className="text-xs text-muted-foreground mt-2">Finished & Closed</p>
             </CardContent>
           </Card>
 
-          <Card className="bg-gradient-to-br from-amber-50 to-amber-100 border-amber-200">
+          <Card className="bg-linear-to-br from-amber-50 to-amber-100 border-amber-200 dark:from-amber-950/30 dark:to-amber-900/20 dark:border-amber-800/40">
             <CardContent className="p-5">
-              <p className="text-xs text-amber-700 mb-2 font-medium">Monthly Growth</p>
-              <p className="text-3xl font-bold text-amber-900">{subMetrics.monthlyGrowth ? `${subMetrics.monthlyGrowth}%` : "0%"}</p>
-              <p className="text-xs text-amber-600 mt-2">New Subscriptions</p>
+              <p className="text-xs text-amber-700 dark:text-amber-300 mb-2 font-medium">Monthly Growth</p>
+              <p className="text-3xl font-bold text-amber-950 dark:text-amber-100">{subMetrics.monthlyGrowth ? `${subMetrics.monthlyGrowth}%` : "0%"}</p>
+              <p className="text-xs text-amber-600 dark:text-amber-300 mt-2">New Subscriptions</p>
             </CardContent>
           </Card>
         </div>
@@ -486,7 +540,7 @@ export default function ReportsTab() {
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-slate-200 text-left text-xs font-semibold text-slate-700 bg-slate-50">
+              <tr className="border-b border-border text-left text-xs font-semibold text-muted-foreground bg-muted/50">
                 <th className="px-4 py-3">Customer</th>
                 <th className="px-4 py-3">Installment</th>
                 <th className="px-4 py-3">Amount Due</th>
@@ -494,19 +548,19 @@ export default function ReportsTab() {
                 <th className="px-4 py-3">Status</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-200">
+            <tbody className="divide-y divide-border">
               {outstanding.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-4 py-8 text-center text-slate-500">
+                  <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">
                     <span className="text-emerald-600 font-medium">✓ All installments are paid</span>
                   </td>
                 </tr>
               ) : outstanding.slice(0, 20).map((inst: Installment) => (
-                <tr key={inst._id} className={`hover:bg-slate-50 ${inst.status === "overdue" ? "bg-rose-50" : ""}`}>
-                  <td className="px-4 py-3 font-medium text-slate-900">{inst.clientName}</td>
-                  <td className="px-4 py-3 text-slate-600 text-xs">{inst.installmentNumber}/{inst.totalInstallments}</td>
-                  <td className="px-4 py-3 font-medium text-slate-900">{fmtCurrency(inst.amount - inst.paidAmount)}</td>
-                  <td className={`px-4 py-3 text-xs ${inst.status === "overdue" ? "text-rose-600 font-medium" : "text-slate-600"}`}>
+                <tr key={inst._id} className={`hover:bg-muted/50 ${inst.status === "overdue" ? "bg-rose-50" : ""}`}>
+                  <td className="px-4 py-3 font-medium text-foreground">{inst.clientName}</td>
+                  <td className="px-4 py-3 text-muted-foreground text-xs">{inst.installmentNumber}/{inst.totalInstallments}</td>
+                  <td className="px-4 py-3 font-medium text-foreground">{fmtCurrency(inst.amount - inst.paidAmount)}</td>
+                  <td className={`px-4 py-3 text-xs ${inst.status === "overdue" ? "text-rose-600 font-medium" : "text-muted-foreground"}`}>
                     {fmtDate(inst.dueDate)}
                   </td>
                   <td className="px-4 py-3">

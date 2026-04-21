@@ -24,6 +24,7 @@ import {
 import { Button } from "@/components/ui/button";
 import api from "@/lib/api";
 import { toast } from "sonner";
+import { FinancePeriodFilters, FinancePeriodPreset } from "./components/finance.types";
 
 const TABS = [
   { id: "dashboard",     label: "Dashboard",     icon: LayoutDashboard },
@@ -40,6 +41,20 @@ export default function FinancePage() {
   const [showFirstConfirm, setShowFirstConfirm] = useState(false);
   const [showSecondConfirm, setShowSecondConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const today = new Date();
+  const [filters, setFilters] = useState<FinancePeriodFilters>({
+    preset: "ytd",
+    month: today.getMonth() + 1,
+    year: today.getFullYear(),
+    startDate: "",
+    endDate: "",
+  });
+
+  const monthOptions = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+  ];
+  const yearOptions = Array.from({ length: 7 }, (_, i) => today.getFullYear() - 3 + i);
 
   const handleFirstConfirm = () => {
     setShowFirstConfirm(false);
@@ -167,6 +182,78 @@ export default function FinancePage() {
         </AlertDialog>
       </div>
 
+      <div className="rounded-xl border border-primary/20 bg-primary-light/50 p-4">
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-3">
+            <div className="lg:col-span-2">
+              <label className="text-xs font-semibold text-primary mb-1.5 block">Period Preset</label>
+              <select
+                className="w-full h-10 rounded-md border border-primary/30 bg-background px-3 text-sm"
+                value={filters.preset}
+                onChange={(e) => setFilters((prev) => ({ ...prev, preset: e.target.value as FinancePeriodPreset }))}
+              >
+                <option value="ytd">Year To Date</option>
+                <option value="thisMonth">This Month</option>
+                <option value="last30">Last 30 Days</option>
+                <option value="last90">Last 90 Days</option>
+                <option value="specificMonth">Specific Month</option>
+                <option value="custom">Custom Range</option>
+              </select>
+            </div>
+
+            {filters.preset === "specificMonth" && (
+              <>
+                <div>
+                  <label className="text-xs font-semibold text-primary mb-1.5 block">Month</label>
+                  <select
+                    className="w-full h-10 rounded-md border border-primary/30 bg-background px-3 text-sm"
+                    value={filters.month}
+                    onChange={(e) => setFilters((prev) => ({ ...prev, month: Number(e.target.value) }))}
+                  >
+                    {monthOptions.map((m, i) => (
+                      <option key={m} value={i + 1}>{m}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-primary mb-1.5 block">Year</label>
+                  <select
+                    className="w-full h-10 rounded-md border border-primary/30 bg-background px-3 text-sm"
+                    value={filters.year}
+                    onChange={(e) => setFilters((prev) => ({ ...prev, year: Number(e.target.value) }))}
+                  >
+                    {yearOptions.map((y) => (
+                      <option key={y} value={y}>{y}</option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            )}
+
+            {filters.preset === "custom" && (
+              <>
+                <div>
+                  <label className="text-xs font-semibold text-primary mb-1.5 block">From</label>
+                  <input
+                    type="date"
+                    className="w-full h-10 rounded-md border border-primary/30 bg-background px-3 text-sm"
+                    value={filters.startDate}
+                    onChange={(e) => setFilters((prev) => ({ ...prev, startDate: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-primary mb-1.5 block">To</label>
+                  <input
+                    type="date"
+                    className="w-full h-10 rounded-md border border-primary/30 bg-background px-3 text-sm"
+                    value={filters.endDate}
+                    onChange={(e) => setFilters((prev) => ({ ...prev, endDate: e.target.value }))}
+                  />
+                </div>
+              </>
+            )}
+        </div>
+      </div>
+
       <Tabs.Root value={activeTab} onValueChange={setActiveTab}>
         {/* Tab list */}
         <Tabs.List className="flex items-center gap-1 border-b border-border pb-0 overflow-x-auto scrollbar-none">
@@ -189,13 +276,13 @@ export default function FinancePage() {
 
         {/* Tab content */}
         <div className="pt-6">
-          <Tabs.Content value="dashboard"     forceMount className={activeTab !== "dashboard"     ? "hidden" : ""}><FinanceDashboard /></Tabs.Content>
-          <Tabs.Content value="subscriptions" forceMount className={activeTab !== "subscriptions" ? "hidden" : ""}><SubscriptionsTab /></Tabs.Content>
-          <Tabs.Content value="installments"  forceMount className={activeTab !== "installments"  ? "hidden" : ""}><InstallmentsTab /></Tabs.Content>
-          <Tabs.Content value="payments"      forceMount className={activeTab !== "payments"      ? "hidden" : ""}><PaymentsTab /></Tabs.Content>
-          <Tabs.Content value="revenue"       forceMount className={activeTab !== "revenue"       ? "hidden" : ""}><RevenueTab /></Tabs.Content>
-          <Tabs.Content value="expenses"      forceMount className={activeTab !== "expenses"      ? "hidden" : ""}><ExpensesTab /></Tabs.Content>
-          <Tabs.Content value="reports"       forceMount className={activeTab !== "reports"       ? "hidden" : ""}><ReportsTab /></Tabs.Content>
+          <Tabs.Content value="dashboard"     forceMount className={activeTab !== "dashboard"     ? "hidden" : ""}><FinanceDashboard filters={filters} /></Tabs.Content>
+          <Tabs.Content value="subscriptions" forceMount className={activeTab !== "subscriptions" ? "hidden" : ""}><SubscriptionsTab filters={filters} /></Tabs.Content>
+          <Tabs.Content value="installments"  forceMount className={activeTab !== "installments"  ? "hidden" : ""}><InstallmentsTab filters={filters} /></Tabs.Content>
+          <Tabs.Content value="payments"      forceMount className={activeTab !== "payments"      ? "hidden" : ""}><PaymentsTab filters={filters} /></Tabs.Content>
+          <Tabs.Content value="revenue"       forceMount className={activeTab !== "revenue"       ? "hidden" : ""}><RevenueTab filters={filters} /></Tabs.Content>
+          <Tabs.Content value="expenses"      forceMount className={activeTab !== "expenses"      ? "hidden" : ""}><ExpensesTab filters={filters} /></Tabs.Content>
+          <Tabs.Content value="reports"       forceMount className={activeTab !== "reports"       ? "hidden" : ""}><ReportsTab filters={filters} /></Tabs.Content>
         </div>
       </Tabs.Root>
     </div>

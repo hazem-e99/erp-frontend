@@ -6,32 +6,51 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { PageLoader } from "@/components/ui/loading";
 import { FileDown } from "lucide-react";
-import { Revenue, STATUS_VARIANT, fmtCurrency, fmtDate } from "./finance.types";
+import { Revenue, STATUS_VARIANT, fmtCurrency, fmtDate, FinancePeriodFilters, buildPeriodQuery } from "./finance.types";
 import { FilterBar } from "@/components/finance/FilterBar";
 import { exportToExcel, fmtExcelCurrency, fmtExcelDate } from "@/lib/excel-export";
 
-export default function RevenueTab() {
+interface RevenueTabProps {
+  filters: FinancePeriodFilters;
+}
+
+export default function RevenueTab({ filters: periodFilters }: RevenueTabProps) {
   const [revenue, setRevenue] = useState<Revenue[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState("all");
   const [page, setPage] = useState(1);
   const LIMIT = 25;
-  const [filters, setFilters] = useState<Record<string, any>>({});
+  const [filters, setFilters] = useState<Record<string, string>>({});
 
-  const fetch = async () => {
-    setLoading(true);
-    try {
-      const params: Record<string, any> = { page, limit: LIMIT };
-      if (statusFilter !== "all") params.status = statusFilter;
-      const res = await api.get("/finance/revenue", { params });
-      setRevenue(res.data.data ?? []);
-      setTotal(res.data.total ?? 0);
-    } catch (e) { console.error(e); }
-    setLoading(false);
-  };
+  useEffect(() => {
+    let cancelled = false;
 
-  useEffect(() => { fetch(); }, [statusFilter, page]);
+    const run = async () => {
+      try {
+        const params: Record<string, string | number> = {
+          page,
+          limit: LIMIT,
+          ...buildPeriodQuery(periodFilters),
+        };
+        if (statusFilter !== "all") params.status = statusFilter;
+
+        const res = await api.get("/finance/revenue", { params });
+        if (cancelled) return;
+        setRevenue(res.data.data ?? []);
+        setTotal(res.data.total ?? 0);
+      } catch (e) {
+        if (!cancelled) console.error(e);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [statusFilter, page, periodFilters]);
 
   // Filter revenue based on active filters
   const filteredRevenue = useMemo(() => {

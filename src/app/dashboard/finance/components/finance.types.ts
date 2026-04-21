@@ -124,6 +124,55 @@ export interface DashboardSummary {
   }>;
 }
 
+export type FinancePeriodPreset = 'ytd' | 'thisMonth' | 'last30' | 'last90' | 'custom' | 'specificMonth';
+
+export interface FinancePeriodFilters {
+  preset: FinancePeriodPreset;
+  month: number;
+  year: number;
+  startDate: string;
+  endDate: string;
+}
+
+export function buildPeriodQuery(filters: FinancePeriodFilters): Record<string, string | number> {
+  const now = new Date();
+
+  if (filters.preset === 'specificMonth') {
+    return { month: filters.month, year: filters.year };
+  }
+
+  if (filters.preset === 'custom') {
+    return {
+      ...(filters.startDate ? { startDate: filters.startDate } : {}),
+      ...(filters.endDate ? { endDate: filters.endDate } : {}),
+    };
+  }
+
+  if (filters.preset === 'thisMonth') {
+    return { month: now.getMonth() + 1, year: now.getFullYear() };
+  }
+
+  if (filters.preset === 'last30') {
+    const start = new Date(now);
+    start.setDate(now.getDate() - 30);
+    return {
+      startDate: start.toISOString().slice(0, 10),
+      endDate: now.toISOString().slice(0, 10),
+    };
+  }
+
+  if (filters.preset === 'last90') {
+    const start = new Date(now);
+    start.setDate(now.getDate() - 90);
+    return {
+      startDate: start.toISOString().slice(0, 10),
+      endDate: now.toISOString().slice(0, 10),
+    };
+  }
+
+  return {};
+}
+
 export const PLAN_LABELS: Record<string, string> = {
   monthly: "Monthly",
   quarterly: "Quarterly",

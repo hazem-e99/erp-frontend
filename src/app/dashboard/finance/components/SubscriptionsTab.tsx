@@ -24,7 +24,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { Plus, X, ChevronRight, FileDown } from "lucide-react";
 import {
   Subscription, PLAN_LABELS, STATUS_VARIANT, fmtCurrency, fmtDate,
-  CURRENCY_NAMES, type SupportedCurrency as TSupportedCurrency,
+  CURRENCY_NAMES, type SupportedCurrency as TSupportedCurrency, FinancePeriodFilters, buildPeriodQuery,
 } from "./finance.types";
 import { FilterBar } from "@/components/finance/FilterBar";
 import { exportToExcel, fmtExcelCurrency, fmtExcelDate } from "@/lib/excel-export";
@@ -61,7 +61,11 @@ const emptyForm = {
   description: "",
 };
 
-export default function SubscriptionsTab() {
+interface SubscriptionsTabProps {
+  filters: FinancePeriodFilters;
+}
+
+export default function SubscriptionsTab({ filters: periodFilters }: SubscriptionsTabProps) {
   const [subs, setSubs] = useState<Subscription[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -75,6 +79,10 @@ export default function SubscriptionsTab() {
   const [rowTotalError, setRowTotalError] = useState<string | null>(null);
   const [clients, setClients] = useState<any[]>([]);
   const [filters, setFilters] = useState<Record<string, any>>({});
+  const periodQuery = useMemo(
+    () => buildPeriodQuery(periodFilters),
+    [periodFilters.preset, periodFilters.month, periodFilters.year, periodFilters.startDate, periodFilters.endDate],
+  );
   // Per-installment rows: each has amount + dueDate (used for split_2 and custom)
   const [installmentRows, setInstallmentRows] = useState<{ amount: string; dueDate: string }[]>(
     [{ amount: "", dueDate: "" }, { amount: "", dueDate: "" }]
@@ -90,7 +98,8 @@ export default function SubscriptionsTab() {
   const fetch = async () => {
     setLoading(true);
     try {
-      const res = await api.get("/finance/subscriptions", { params: { limit: 50 } });
+      const params = { limit: 50, ...periodQuery };
+      const res = await api.get("/finance/subscriptions", { params });
       setSubs(res.data.data ?? []);
       setTotal(res.data.total ?? 0);
     } catch (e) { console.error(e); }
@@ -98,11 +107,12 @@ export default function SubscriptionsTab() {
   };
 
   useEffect(() => {
-    fetch();
     api.get("/clients", { params: { limit: 200 } })
       .then((r) => setClients(r.data.data ?? []))
       .catch(() => {});
   }, []);
+
+  useEffect(() => { fetch(); }, [periodQuery]);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
