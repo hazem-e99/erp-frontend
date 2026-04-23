@@ -174,6 +174,19 @@ export default function EmployeesPage() {
     }
   };
 
+  const handlePermanentDelete = async (id: string) => {
+    const accepted = confirm('Delete this employee and linked user permanently? This cannot be undone.');
+    if (!accepted) return;
+
+    try {
+      await api.delete(`/employees/${id}/permanent`);
+      toast.success('Employee and user account deleted permanently');
+      fetchEmployees();
+    } catch (e: any) {
+      toast.error(e.response?.data?.message || 'Error deleting employee permanently');
+    }
+  };
+
   // Department Handlers
   const handleSaveDept = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -487,6 +500,7 @@ export default function EmployeesPage() {
                       <Button size="sm" variant="outline" onClick={() => router.push(`/dashboard/employees/${emp._id}`)}><Eye className="w-3 h-3 mr-1" />View</Button>
                       <Button size="sm" variant="outline" onClick={() => handleEdit(emp)}>Edit</Button>
                       <Button size="sm" variant="ghost" className="text-destructive" onClick={() => handleDelete(emp._id)}>Terminate</Button>
+                      <Button size="sm" variant="destructive" onClick={() => handlePermanentDelete(emp._id)}>Delete User</Button>
                     </div>
                   </CardContent>
                 </Card>

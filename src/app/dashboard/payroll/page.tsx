@@ -25,11 +25,20 @@ interface Employee {
 interface PayrollData {
   employeeId: string;
   bonus: number;
+  commission: number;
   deduction: number;
   kpiPercentage: number;
 }
 
 const statusColors: Record<string, any> = { draft: 'secondary', processed: 'warning', paid: 'success' };
+
+const normalizeId = (value: any): string => {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'object' && value._id) return String(value._id);
+  if (typeof value === 'object' && value.id) return String(value.id);
+  return String(value);
+};
 
 export default function PayrollPage() {
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -54,7 +63,7 @@ export default function PayrollPage() {
     try {
       const [eRes, pRes, pendingRes] = await Promise.all([
         api.get('/employees', { params: { limit: 1000 } }),
-        api.get('/payroll', { params: { month: selectedMonth, year: selectedYear } }),
+        api.get('/payroll', { params: { month: selectedMonth, year: selectedYear, limit: 1000 } }),
         api.get('/payroll/pending-expenses-amount').catch(() => ({ data: { total: 0 } }))
       ]);
       
@@ -74,23 +83,28 @@ export default function PayrollPage() {
         netSalary: p.netSalary,
         isRecorded: p.isRecordedAsExpense,
         baseSalary: p.baseSalary,
+        commissions: p.commissions,
         deductions: p.deductions,
       })));
       
       setPendingExpenses(pendingAmount);
+
+      const getPayrollEmployeeId = (payroll: any): string => normalizeId(payroll?.employeeId);
       
       // Initialize payroll data for each employee
       const initialData: Record<string, PayrollData> = {};
       empData.forEach((emp: Employee) => {
-        const existingPayroll = payData.find((p: any) => p.employeeId?._id === emp._id);
+        const existingPayroll = payData.find((p: any) => getPayrollEmployeeId(p) === normalizeId(emp._id));
         initialData[emp._id] = existingPayroll ? {
           employeeId: emp._id,
           bonus: existingPayroll.bonuses || 0,
+          commission: existingPayroll.commissions || 0,
           deduction: existingPayroll.deductions || 0,
           kpiPercentage: existingPayroll.kpiPercentage || 0,
         } : {
           employeeId: emp._id,
           bonus: 0,
+          commission: 0,
           deduction: 0,
           kpiPercentage: 0,
         };
@@ -117,38 +131,76 @@ export default function PayrollPage() {
   const calculateNetSalary = (emp: Employee, data: PayrollData) => {
     const maxKpi = emp.maxKpi || 0;
     const kpiAmount = (maxKpi * data.kpiPercentage) / 100;
-    return emp.baseSalary + data.bonus - data.deduction + kpiAmount;
+    return emp.baseSalary + data.bonus + data.commission - data.deduction + kpiAmount;
   };
+
+  const getPayrollEmployeeId = (payroll: any): string => normalizeId(payroll?.employeeId);
 
   const handleGenerateOrUpdate = async (empId: string) => {
     const employee = employees.find(e => e._id === empId);
     if (!employee) return;
 
     const data = payrollData[empId];
-    const existingPayroll = payrolls.find(p => p.employeeId?._id === empId);
+    const normalizedEmpId = normalizeId(empId);
+    const existingPayroll = payrolls.find(p => getPayrollEmployeeId(p) === normalizedEmpId);
 
     try {
       if (existingPayroll) {
         // Update existing payroll
         await api.put(`/payroll/${existingPayroll._id}`, {
           bonuses: data.bonus,
+          commissions: data.commission,
           deductions: data.deduction,
           maxKpi: employee.maxKpi || 0,
           kpiPercentage: data.kpiPercentage,
         });
         toast.success('Payroll updated successfully');
       } else {
-        // Generate new payroll
-        await api.post('/payroll/generate', {
-          employeeId: empId,
-          month: selectedMonth,
-          year: selectedYear,
-          bonuses: data.bonus,
-          deductions: data.deduction,
-          maxKpi: employee.maxKpi || 0,
-          kpiPercentage: data.kpiPercentage,
-        });
-        toast.success('Payroll generated successfully');
+        // Generate new payroll only after checking server for existing record.
+        try {
+          const refreshed = await api.get('/payroll', { params: { month: selectedMonth, year: selectedYear, employeeId: empId, limit: 1 } });
+          const payrollToUpdate = refreshed.data?.data?.[0];
+
+          if (payrollToUpdate?._id) {
+            await api.put(`/payroll/${payrollToUpdate._id}`, {
+              bonuses: data.bonus,
+              commissions: data.commission,
+              deductions: data.deduction,
+              maxKpi: employee.maxKpi || 0,
+              kpiPercentage: data.kpiPercentage,
+            });
+            toast.success('Payroll updated successfully');
+          } else {
+            await api.post('/payroll/generate', {
+              employeeId: empId,
+              month: selectedMonth,
+              year: selectedYear,
+              bonuses: data.bonus,
+              commissions: data.commission,
+              deductions: data.deduction,
+              maxKpi: employee.maxKpi || 0,
+              kpiPercentage: data.kpiPercentage,
+            });
+            toast.success('Payroll generated successfully');
+          }
+        } catch (generateError: any) {
+          const isAlreadyGenerated = generateError?.response?.status === 409;
+          if (!isAlreadyGenerated) throw generateError;
+
+          // Fallback: if payroll was generated in parallel/by stale state, update it instead.
+          const refreshed = await api.get('/payroll', { params: { month: selectedMonth, year: selectedYear, employeeId: empId, limit: 1 } });
+          const payrollToUpdate = refreshed.data?.data?.[0];
+          if (!payrollToUpdate?._id) throw generateError;
+
+          await api.put(`/payroll/${payrollToUpdate._id}`, {
+            bonuses: data.bonus,
+            commissions: data.commission,
+            deductions: data.deduction,
+            maxKpi: employee.maxKpi || 0,
+            kpiPercentage: data.kpiPercentage,
+          });
+          toast.success('Payroll updated successfully');
+        }
       }
       fetchData();
     } catch (e: any) {
@@ -224,7 +276,7 @@ export default function PayrollPage() {
     // Status filter
     if (statusFilter === "all") return matchesSearch;
     
-    const existingPayroll = payrolls.find(p => p.employeeId?._id === emp._id);
+    const existingPayroll = payrolls.find(p => getPayrollEmployeeId(p) === normalizeId(emp._id));
     if (statusFilter === "no-payroll") {
       return matchesSearch && !existingPayroll;
     }
@@ -237,7 +289,7 @@ export default function PayrollPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Payroll Management</h1>
-          <p className="text-sm text-muted-foreground mt-1">Manage employee salaries & bonuses</p>
+          <p className="text-sm text-muted-foreground mt-1">Manage employee salaries, bonuses, and commissions</p>
         </div>
         
         <div className="flex items-center gap-3">
@@ -323,11 +375,11 @@ export default function PayrollPage() {
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
           {filteredEmployees.map(emp => {
-            const data = payrollData[emp._id] || { bonus: 0, deduction: 0, kpiPercentage: 0 };
+            const data = payrollData[emp._id] || { bonus: 0, commission: 0, deduction: 0, kpiPercentage: 0 };
             const netSalary = calculateNetSalary(emp, data);
             const maxKpi = emp.maxKpi || 0;
             const kpiAmount = (maxKpi * data.kpiPercentage) / 100;
-            const existingPayroll = payrolls.find(p => p.employeeId?._id === emp._id);
+            const existingPayroll = payrolls.find(p => getPayrollEmployeeId(p) === normalizeId(emp._id));
             const isOpen = openCards[emp._id] || false;
 
             return (
@@ -379,8 +431,8 @@ export default function PayrollPage() {
 
                     {/* Collapsible Content - Input Fields */}
                     <CollapsibleContent className="space-y-4">
-                      {/* Bonus & Deduction */}
-                      <div className="grid grid-cols-2 gap-3">
+                      {/* Bonus, Commission & Deduction */}
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                         <div>
                           <label className="text-xs text-muted-foreground flex items-center gap-1">
                             <TrendingUp className="w-3 h-3 text-success" />
@@ -392,6 +444,20 @@ export default function PayrollPage() {
                             placeholder="0"
                             value={data.bonus || ''}
                             onChange={(e) => updatePayrollData(emp._id, 'bonus', +e.target.value)}
+                            className="mt-1 h-9"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs text-muted-foreground flex items-center gap-1">
+                            <TrendingUp className="w-3 h-3 text-primary" />
+                            Commission
+                          </label>
+                          <Input
+                            type="number"
+                            min="0"
+                            placeholder="0"
+                            value={data.commission || ''}
+                            onChange={(e) => updatePayrollData(emp._id, 'commission', +e.target.value)}
                             className="mt-1 h-9"
                           />
                         </div>
@@ -443,6 +509,12 @@ export default function PayrollPage() {
                           <div className="flex justify-between text-success">
                             <span>+ Bonus:</span>
                             <span>+{data.bonus.toLocaleString()} {emp.currency || BASE_CURRENCY}</span>
+                          </div>
+                        )}
+                        {data.commission > 0 && (
+                          <div className="flex justify-between text-primary">
+                            <span>+ Commission:</span>
+                            <span>+{data.commission.toLocaleString()} {emp.currency || BASE_CURRENCY}</span>
                           </div>
                         )}
                         {data.deduction > 0 && (
