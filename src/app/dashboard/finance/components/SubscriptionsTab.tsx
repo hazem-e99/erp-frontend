@@ -72,6 +72,7 @@ export default function SubscriptionsTab({ filters: periodFilters }: Subscriptio
   const [open, setOpen] = useState(false);
   const [cancelId, setCancelId] = useState<string | null>(null);
   const [cancelReason, setCancelReason] = useState("");
+  const [deleteId, setDeleteId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({ ...emptyForm });
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -188,6 +189,20 @@ export default function SubscriptionsTab({ filters: periodFilters }: Subscriptio
       setCancelReason("");
       fetch();
       financeToast.subscriptionCancelled();
+    } catch (e: any) {
+      toast$.apiError(e);
+    }
+    setSaving(false);
+  };
+
+  const handleDelete = async () => {
+    if (!deleteId) return;
+    setSaving(true);
+    try {
+      await api.delete(`/finance/subscriptions/${deleteId}`);
+      setDeleteId(null);
+      fetch();
+      toast$.success("Subscription deleted successfully");
     } catch (e: any) {
       toast$.apiError(e);
     }
@@ -696,7 +711,7 @@ export default function SubscriptionsTab({ filters: periodFilters }: Subscriptio
                   <td className="px-4 py-3">
                     <Badge variant={STATUS_VARIANT[s.status]}>{s.status}</Badge>
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3 flex gap-2">
                     {(s.status === "pending" || s.status === "active") && (
                       <Button
                         variant="ghost"
@@ -707,6 +722,14 @@ export default function SubscriptionsTab({ filters: periodFilters }: Subscriptio
                         Cancel
                       </Button>
                     )}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-destructive hover:text-destructive text-xs h-7"
+                      onClick={() => setDeleteId(s._id)}
+                    >
+                      Delete
+                    </Button>
                   </td>
                 </tr>
               ))}
@@ -735,6 +758,32 @@ export default function SubscriptionsTab({ filters: periodFilters }: Subscriptio
               </Dialog.Close>
               <Button variant="ghost" className="flex-1 text-destructive hover:text-destructive border border-destructive/30" onClick={handleCancel} disabled={saving}>
                 {saving ? "Cancelling..." : "Confirm Cancel"}
+              </Button>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+
+      {/* Delete dialog */}
+      <Dialog.Root open={!!deleteId} onOpenChange={(o) => { if (!o) setDeleteId(null); }}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 bg-black/50 z-50" />
+          <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-md bg-card border border-border rounded-xl shadow-xl p-6">
+            <Dialog.Title className="text-base font-semibold mb-4 text-destructive">Delete Subscription</Dialog.Title>
+            <p className="text-sm text-muted-foreground mb-4">
+              This will permanently delete the subscription and all its installments. This action cannot be undone.
+            </p>
+            <div className="flex gap-3 mt-6">
+              <Dialog.Close asChild>
+                <Button variant="ghost" className="flex-1">Cancel</Button>
+              </Dialog.Close>
+              <Button
+                variant="ghost"
+                className="flex-1 text-destructive hover:text-destructive bg-destructive/10 hover:bg-destructive/20 border border-destructive/30"
+                onClick={handleDelete}
+                disabled={saving}
+              >
+                {saving ? "Deleting..." : "Delete Permanently"}
               </Button>
             </div>
           </Dialog.Content>

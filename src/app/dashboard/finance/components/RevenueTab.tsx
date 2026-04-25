@@ -5,7 +5,9 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { PageLoader } from "@/components/ui/loading";
-import { FileDown } from "lucide-react";
+import { FileDown, Trash2 } from "lucide-react";
+import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from "@/components/ui/dialog";
+import { toast } from "sonner";
 import { Revenue, STATUS_VARIANT, fmtCurrency, fmtDate, FinancePeriodFilters, buildPeriodQuery } from "./finance.types";
 import { FilterBar } from "@/components/finance/FilterBar";
 import { exportToExcel, fmtExcelCurrency, fmtExcelDate } from "@/lib/excel-export";
@@ -22,6 +24,8 @@ export default function RevenueTab({ filters: periodFilters }: RevenueTabProps) 
   const [page, setPage] = useState(1);
   const LIMIT = 25;
   const [filters, setFilters] = useState<Record<string, string>>({});
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -79,6 +83,36 @@ export default function RevenueTab({ filters: periodFilters }: RevenueTabProps) 
       return true;
     });
   }, [revenue, filters]);
+
+  const handleDelete = async () => {
+    if (!deleteId) return;
+
+    setDeleting(true);
+    try {
+      await api.delete(`/finance/revenue/${deleteId}`);
+      toast.success('Revenue record deleted');
+      setDeleteId(null);
+
+      // Refetch data
+      const params: Record<string, string | number> = {
+        page,
+        limit: LIMIT,
+        ...buildPeriodQuery(periodFilters),
+      };
+      if (statusFilter !== "all") params.status = statusFilter;
+
+      const res = await api.get("/finance/revenue", { params });
+      setRevenue(res.data.data ?? []);
+      setTotal(res.data.total ?? 0);
+    } catch (e: any) {
+      console.error(e);
+      toast.error('Failed to delete revenue record', {
+        description: e.response?.data?.message || e.message,
+      });
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   // Export to Excel function
   const handleExport = async () => {
@@ -156,12 +190,13 @@ export default function RevenueTab({ filters: periodFilters }: RevenueTabProps) 
                 <th className="px-4 py-3 font-medium">Recognition Date</th>
                 <th className="px-4 py-3 font-medium">Period Month</th>
                 <th className="px-4 py-3 font-medium">Status</th>
+                <th className="px-4 py-3 font-medium">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
               {filteredRevenue.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">No revenue entries found</td>
+                  <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">No revenue entries found</td>
                 </tr>
               )}
               {filteredRevenue.map((r) => (
@@ -173,6 +208,51 @@ export default function RevenueTab({ filters: periodFilters }: RevenueTabProps) 
                   <td className="px-4 py-3 text-muted-foreground text-xs">Month {r.periodMonth}</td>
                   <td className="px-4 py-3">
                     <Badge variant={STATUS_VARIANT[r.status]}>{r.status}</Badge>
+                  </td>
+                  <td className="px-4 py-3">
+                    <Dialog open={deleteId === r._id} onOpenChange={(open) => !open && setDeleteId(null)}>
+                      <DialogTrigger asChild>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setDeleteId(r._id)}
+                          className="w-8 h-8 p-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent>
+                        <DialogHeader>
+                          <DialogTitle>Delete Revenue Record</DialogTitle>
+                        </DialogHeader>
+                        <div className="space-y-4">
+                          <p className="text-sm text-muted-foreground">
+                            Are you sure you want to delete this revenue record? This action cannot be undone.
+                          </p>
+                          <div className="bg-muted/50 rounded p-3 space-y-1 text-sm">
+                            <div><strong>Customer:</strong> {r.clientName}</div>
+                            <div><strong>Amount:</strong> {fmtCurrency(r.amount)}</div>
+                            <div><strong>Recognition Date:</strong> {fmtDate(r.recognitionDate)}</div>
+                          </div>
+                          <DialogFooter>
+                            <Button
+                              variant="outline"
+                              onClick={() => setDeleteId(null)}
+                              disabled={deleting}
+                            >
+                              Cancel
+                            </Button>
+                            <Button
+                              variant="destructive"
+                              onClick={handleDelete}
+                              disabled={deleting}
+                            >
+                              {deleting ? 'Deleting...' : 'Delete'}
+                            </Button>
+                          </DialogFooter>
+                        </div>
+                      </DialogContent>
+                    </Dialog>
                   </td>
                 </tr>
               ))}

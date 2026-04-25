@@ -5,7 +5,9 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { PageLoader } from "@/components/ui/loading";
-import { Bell, FileDown } from "lucide-react";
+import { Bell, FileDown, Trash2 } from "lucide-react";
+import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { toast } from "sonner";
 import { Installment, STATUS_VARIANT, fmtCurrency, fmtDate, FinancePeriodFilters, buildPeriodQuery } from "./finance.types";
 import { FilterBar } from "@/components/finance/FilterBar";
 import { exportToExcel, fmtExcelCurrency, fmtExcelDate } from "@/lib/excel-export";
@@ -24,6 +26,8 @@ export default function InstallmentsTab({ filters: periodFilters }: Installments
   const [page, setPage] = useState(1);
   const LIMIT = 25;
   const [filters, setFilters] = useState<Record<string, any>>({});
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const periodQuery = useMemo(
     () => buildPeriodQuery(periodFilters),
     [periodFilters.preset, periodFilters.month, periodFilters.year, periodFilters.startDate, periodFilters.endDate],
@@ -73,6 +77,25 @@ export default function InstallmentsTab({ filters: periodFilters }: Installments
       return true;
     });
   }, [installments, filters]);
+
+  const handleDelete = async () => {
+    if (!deleteId) return;
+
+    setDeleting(true);
+    try {
+      await api.delete(`/finance/installments/${deleteId}`);
+      toast.success('Installment deleted');
+      setDeleteId(null);
+      await fetch();
+    } catch (e: any) {
+      console.error(e);
+      toast.error('Failed to delete installment', {
+        description: e.response?.data?.message || e.message,
+      });
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   // Export to Excel function
   const handleExport = async () => {
@@ -150,12 +173,13 @@ export default function InstallmentsTab({ filters: periodFilters }: Installments
                 <th className="px-4 py-3 font-medium">Paid</th>
                 <th className="px-4 py-3 font-medium">Due Date</th>
                 <th className="px-4 py-3 font-medium">Status</th>
+                <th className="px-4 py-3 font-medium">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
               {filteredInstallments.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">No installments found</td>
+                  <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">No installments found</td>
                 </tr>
               )}
               {filteredInstallments.map((inst) => (
@@ -188,6 +212,52 @@ export default function InstallmentsTab({ filters: periodFilters }: Installments
                         <Bell className="w-3.5 h-3.5 text-destructive" />
                       )}
                     </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <Dialog open={deleteId === inst._id} onOpenChange={(open) => !open && setDeleteId(null)}>
+                      <DialogTrigger asChild>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setDeleteId(inst._id)}
+                          className="w-8 h-8 p-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent>
+                        <DialogHeader>
+                          <DialogTitle>Delete Installment</DialogTitle>
+                        </DialogHeader>
+                        <div className="space-y-4">
+                          <p className="text-sm text-muted-foreground">
+                            Are you sure you want to delete this installment? This action cannot be undone.
+                          </p>
+                          <div className="bg-muted/50 rounded p-3 space-y-1 text-sm">
+                            <div><strong>Customer:</strong> {inst.clientName}</div>
+                            <div><strong>Installment:</strong> {inst.installmentNumber}/{inst.totalInstallments}</div>
+                            <div><strong>Amount:</strong> {fmtCurrency(inst.amount)}</div>
+                            <div><strong>Due Date:</strong> {fmtDate(inst.dueDate)}</div>
+                          </div>
+                          <DialogFooter>
+                            <Button
+                              variant="outline"
+                              onClick={() => setDeleteId(null)}
+                              disabled={deleting}
+                            >
+                              Cancel
+                            </Button>
+                            <Button
+                              variant="destructive"
+                              onClick={handleDelete}
+                              disabled={deleting}
+                            >
+                              {deleting ? 'Deleting...' : 'Delete'}
+                            </Button>
+                          </DialogFooter>
+                        </div>
+                      </DialogContent>
+                    </Dialog>
                   </td>
                 </tr>
               ))}

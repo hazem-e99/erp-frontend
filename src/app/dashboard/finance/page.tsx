@@ -43,7 +43,7 @@ export default function FinancePage() {
   const [isDeleting, setIsDeleting] = useState(false);
   const today = new Date();
   const [filters, setFilters] = useState<FinancePeriodFilters>({
-    preset: "specificMonth",
+    preset: "ytd",
     month: today.getMonth() + 1,
     year: today.getFullYear(),
     startDate: "",
