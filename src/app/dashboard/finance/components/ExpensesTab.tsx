@@ -166,11 +166,11 @@ export default function ExpensesTab({ filters: periodFilters }: ExpensesTabProps
         return false;
       }
 
-      // Date range filter
-      if (filters.dateFrom && new Date(expense.date) < new Date(filters.dateFrom)) {
+      // Date range filter (compare as UTC date strings to avoid timezone drift)
+      if (filters.dateFrom && new Date(expense.date).toISOString().slice(0, 10) < filters.dateFrom) {
         return false;
       }
-      if (filters.dateTo && new Date(expense.date) > new Date(filters.dateTo)) {
+      if (filters.dateTo && new Date(expense.date).toISOString().slice(0, 10) > filters.dateTo) {
         return false;
       }
 

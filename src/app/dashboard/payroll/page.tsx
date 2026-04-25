@@ -9,7 +9,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel } from "@/components/ui/alert-dialog";
 import api from "@/lib/api";
 import { toast } from "sonner";
-import { DollarSign, Calendar, Upload, Check, Loader2, TrendingUp, TrendingDown, ChevronDown, ChevronUp, Search, Filter, Receipt } from "lucide-react";
+import { DollarSign, Calendar, Upload, Check, Loader2, TrendingUp, TrendingDown, ChevronDown, ChevronUp, Search, Filter, Receipt, Unlink } from "lucide-react";
 import { BASE_CURRENCY } from "@/app/dashboard/finance/components/finance.types";
 
 interface Employee {
@@ -57,37 +57,39 @@ export default function PayrollPage() {
   const [pendingExpenses, setPendingExpenses] = useState<number>(0);
   const [expensesDialog, setExpensesDialog] = useState(false);
   const [markingExpenses, setMarkingExpenses] = useState(false);
+  const [expenseDate, setExpenseDate] = useState(new Date().toISOString().split('T')[0]);
+  const [savedPayrollData, setSavedPayrollData] = useState<Record<string, PayrollData>>({});
+  const [updatingAll, setUpdatingAll] = useState(false);
+  const [hasRecordedExpense, setHasRecordedExpense] = useState(false);
+  const [recordedExpenseTotal, setRecordedExpenseTotal] = useState(0);
+  const [updatingExpense, setUpdatingExpense] = useState(false);
+  const [unlinkingExpense, setUnlinkingExpense] = useState(false);
+  const [cleaningExpenses, setCleaningExpenses] = useState(false);
 
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [eRes, pRes, pendingRes] = await Promise.all([
+      const [eRes, pRes] = await Promise.all([
         api.get('/employees', { params: { limit: 1000 } }),
         api.get('/payroll', { params: { month: selectedMonth, year: selectedYear, limit: 1000 } }),
-        api.get('/payroll/pending-expenses-amount').catch(() => ({ data: { total: 0 } }))
       ]);
-      
+
       const empData = eRes.data.data || [];
       setEmployees(empData);
-      
+
       const payData = pRes.data.data || [];
       setPayrolls(payData);
 
-      const pendingAmount = pendingRes.data?.total || 0;
-      const paidPayrolls = payData.filter((p: any) => p.status === 'paid');
-      
-      console.log('🔍 Pending Expenses Amount:', pendingAmount);
-      console.log('📊 Total Paid Payrolls:', paidPayrolls.length);
-      console.log('💰 Paid Payrolls Details:', paidPayrolls.map((p: any) => ({
-        employee: p.employeeId?.userId?.name,
-        netSalary: p.netSalary,
-        isRecorded: p.isRecordedAsExpense,
-        baseSalary: p.baseSalary,
-        commissions: p.commissions,
-        deductions: p.deductions,
-      })));
-      
+      const pendingAmount = payData
+        .filter((p: any) => p.status === 'paid' && !p.isRecordedAsExpense)
+        .reduce((sum: number, p: any) => sum + (p.netSalary || 0), 0);
+
       setPendingExpenses(pendingAmount);
+
+      const recordedPayrolls = payData.filter((p: any) => p.status === 'paid' && p.isRecordedAsExpense);
+      const recordedTotal = recordedPayrolls.reduce((sum: number, p: any) => sum + (p.netSalary || 0), 0);
+      setHasRecordedExpense(recordedPayrolls.length > 0);
+      setRecordedExpenseTotal(recordedTotal);
 
       const getPayrollEmployeeId = (payroll: any): string => normalizeId(payroll?.employeeId);
       
@@ -110,6 +112,7 @@ export default function PayrollPage() {
         };
       });
       setPayrollData(initialData);
+      setSavedPayrollData(JSON.parse(JSON.stringify(initialData)));
     } catch (e) {
       console.error(e);
       toast.error('Failed to load data');
@@ -136,7 +139,7 @@ export default function PayrollPage() {
 
   const getPayrollEmployeeId = (payroll: any): string => normalizeId(payroll?.employeeId);
 
-  const handleGenerateOrUpdate = async (empId: string) => {
+  const handleGenerateOrUpdate = async (empId: string, skipRefetch = false) => {
     const employee = employees.find(e => e._id === empId);
     if (!employee) return;
 
@@ -202,7 +205,7 @@ export default function PayrollPage() {
           toast.success('Payroll updated successfully');
         }
       }
-      fetchData();
+      if (!skipRefetch) fetchData();
     } catch (e: any) {
       console.error(e);
       toast.error(e.response?.data?.message || 'Failed to save payroll');
@@ -252,7 +255,11 @@ export default function PayrollPage() {
 
     setMarkingExpenses(true);
     try {
-      const response = await api.post('/payroll/mark-as-expenses');
+      const response = await api.post('/payroll/mark-as-expenses', {
+        month: selectedMonth,
+        year: selectedYear,
+        expenseDate: expenseDate
+      });
       toast.success(`✅ Recorded ${response.data.count} salary payment(s) as expense totaling $${response.data.total.toLocaleString()}`);
       setExpensesDialog(false);
       fetchData();
@@ -261,6 +268,81 @@ export default function PayrollPage() {
       toast.error(e.response?.data?.message || 'Failed to record expenses');
     } finally {
       setMarkingExpenses(false);
+    }
+  };
+
+  const handleUnlinkExpense = async () => {
+    setUnlinkingExpense(true);
+    try {
+      const response = await api.post('/payroll/unlink-expense', { month: selectedMonth, year: selectedYear });
+      toast.success(`Removed expense record — ${response.data.count} payroll(s) ready to re-record`);
+      fetchData();
+    } catch (e: any) {
+      toast.error(e.response?.data?.message || 'Failed to remove expense');
+    } finally {
+      setUnlinkingExpense(false);
+    }
+  };
+
+  const handleCleanOldExpenses = async () => {
+    if (!window.confirm('⚠️ This will delete ALL salary expenses from Finance. Are you sure?')) {
+      return;
+    }
+    setCleaningExpenses(true);
+    try {
+      const response = await api.post('/payroll/clean-old-expenses');
+      toast.success(`Cleaned ${response.data.deletedCount} old expense record(s). Re-record payrolls now.`);
+      fetchData();
+    } catch (e: any) {
+      toast.error(e.response?.data?.message || 'Failed to clean expenses');
+    } finally {
+      setCleaningExpenses(false);
+    }
+  };
+
+  const handleUpdateExpense = async () => {
+    setUpdatingExpense(true);
+    try {
+      const response = await api.post('/payroll/update-expense', { month: selectedMonth, year: selectedYear });
+      toast.success(`Expense updated — new total: $${response.data.total.toLocaleString()}`);
+      fetchData();
+    } catch (e: any) {
+      toast.error(e.response?.data?.message || 'Failed to update expense');
+    } finally {
+      setUpdatingExpense(false);
+    }
+  };
+
+  // Employees whose payroll data changed vs what was last saved from server
+  const dirtyEmployeeIds = employees.filter(emp => {
+    const current = payrollData[emp._id];
+    const saved = savedPayrollData[emp._id];
+    if (!current || !saved) return false;
+    return (
+      current.bonus !== saved.bonus ||
+      current.commission !== saved.commission ||
+      current.deduction !== saved.deduction ||
+      current.kpiPercentage !== saved.kpiPercentage
+    );
+  }).map(emp => emp._id);
+
+  const updateAllTotal = dirtyEmployeeIds.reduce((sum, id) => {
+    const emp = employees.find(e => e._id === id);
+    if (!emp) return sum;
+    return sum + calculateNetSalary(emp, payrollData[id]);
+  }, 0);
+
+  const handleUpdateAll = async () => {
+    if (dirtyEmployeeIds.length === 0) return;
+    setUpdatingAll(true);
+    try {
+      await Promise.all(dirtyEmployeeIds.map(id => handleGenerateOrUpdate(id, true)));
+      toast.success(`Updated ${dirtyEmployeeIds.length} payroll(s) successfully`);
+      fetchData();
+    } catch {
+      // individual errors already handled in handleGenerateOrUpdate
+    } finally {
+      setUpdatingAll(false);
     }
   };
 
@@ -293,6 +375,45 @@ export default function PayrollPage() {
         </div>
         
         <div className="flex items-center gap-3">
+          {/* Recorded Expense Actions */}
+          {hasRecordedExpense && (
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                className="gap-2"
+                onClick={handleUpdateExpense}
+                disabled={updatingExpense || unlinkingExpense}
+              >
+                {updatingExpense ? <Loader2 className="w-4 h-4 animate-spin" /> : <Receipt className="w-4 h-4" />}
+                Update Expense (${recordedExpenseTotal.toLocaleString()})
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                className="gap-2"
+                onClick={handleUnlinkExpense}
+                disabled={unlinkingExpense || updatingExpense}
+                title="Remove expense record so it can be re-recorded in the correct month"
+              >
+                {unlinkingExpense ? <Loader2 className="w-4 h-4 animate-spin" /> : <Unlink className="w-4 h-4" />}
+                Remove & Re-record
+              </Button>
+            </div>
+          )}
+
+          {/* Clean Old Expenses Button (for fixing issues) */}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="gap-2 text-muted-foreground hover:text-destructive"
+            onClick={handleCleanOldExpenses}
+            disabled={cleaningExpenses}
+            title="Delete all salary expenses to start fresh"
+          >
+            {cleaningExpenses ? <Loader2 className="w-4 h-4 animate-spin" /> : <Unlink className="w-4 h-4" />}
+            Clean Expenses
+          </Button>
+
           {/* Mark as Expenses Button */}
           {pendingExpenses > 0 && (
             <Button
@@ -368,6 +489,24 @@ export default function PayrollPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Update All Banner */}
+      {dirtyEmployeeIds.length > 0 && (
+        <div className="flex items-center justify-between bg-warning/10 border border-warning/30 rounded-lg px-4 py-3">
+          <span className="text-sm font-medium">
+            <span className="text-warning font-bold">{dirtyEmployeeIds.length} employee(s)</span> have unsaved changes — total net: <span className="font-bold">${updateAllTotal.toLocaleString()}</span>
+          </span>
+          <Button
+            size="sm"
+            className="gap-2"
+            onClick={handleUpdateAll}
+            disabled={updatingAll}
+          >
+            {updatingAll ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+            Update All
+          </Button>
+        </div>
+      )}
 
       {/* Employee Payroll Cards */}
       {filteredEmployees.length === 0 ? (
@@ -640,6 +779,15 @@ export default function PayrollPage() {
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">Total Paid Salaries:</span>
                     <span className="font-bold text-lg text-primary">${pendingExpenses.toLocaleString()}</span>
+                  </div>
+                  <div>
+                    <label className="text-sm text-muted-foreground block mb-2">Expense Date:</label>
+                    <input
+                      type="date"
+                      value={expenseDate}
+                      onChange={(e) => setExpenseDate(e.target.value)}
+                      className="w-full h-10 rounded-lg border border-input bg-white px-3 text-base text-black cursor-pointer"
+                    />
                   </div>
                   <p className="text-xs text-muted-foreground">
                     This will create a single expense record in the Finance module under "salaries" category.

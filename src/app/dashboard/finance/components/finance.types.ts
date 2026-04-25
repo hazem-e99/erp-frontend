@@ -221,7 +221,7 @@ export function fmtBaseCurrency(n: number): string {
 }
 
 export function fmtDate(d: string | Date): string {
-  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(new Date(d));
+  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }).format(new Date(d));
 }
 
 /**
