@@ -7,7 +7,7 @@ import {
   LayoutDashboard, Users, Briefcase, FolderKanban, CheckSquare,
   Clock, CalendarOff, DollarSign, Shield, ChevronLeft,
   ChevronRight, Sparkles, UserCircle, Megaphone, Bell, BarChart3,
-  Receipt, FileText, Database,
+  Receipt, FileText, Database, Calculator,
 } from "lucide-react";
 
 const navItems = [
@@ -20,6 +20,7 @@ const navItems = [
   { label: "Employees",    href: "/dashboard/employees",      icon: Briefcase,       permission: "employees:read" },
   { label: "Payroll",      href: "/dashboard/payroll",        icon: DollarSign,      permission: "payroll:read" },
   { label: "Finance",      href: "/dashboard/finance",        icon: Receipt,         permission: "finance:read" },
+  { label: "Commission Calc", href: "/dashboard/commission-calculator", icon: Calculator, permission: null },
   { label: "HR Dashboard", href: "/dashboard/hr",             icon: BarChart3,       permission: "hr:dashboard" },
   { label: "My Profile",   href: "/dashboard/profile",        icon: UserCircle,      permission: null },
   { label: "Notifications",href: "/dashboard/notifications",  icon: Bell,            permission: null },

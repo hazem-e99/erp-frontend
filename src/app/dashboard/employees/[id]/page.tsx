@@ -8,8 +8,15 @@ import { PageLoader } from "@/components/ui/loading";
 import api from "@/lib/api";
 import {
   ArrowLeft, Briefcase, DollarSign, Calendar,
-  Mail, Phone, MapPin, User, Activity, TreePalm,
+  Mail, Phone, MapPin, User, Activity, TreePalm, CreditCard,
 } from "lucide-react";
+
+const PAYMENT_METHOD_LABELS: Record<string, string> = {
+  mobile_wallet: 'Mobile Wallet',
+  visa: 'Visa',
+  bank_account: 'Bank Account',
+  instapay: 'InstaPay',
+};
 
 export default function EmployeeDetailPage() {
   const { id }    = useParams();
@@ -102,6 +109,13 @@ export default function EmployeeDetailPage() {
               { icon: Phone,  label: 'WhatsApp',          value: employee.whatsappNumber || user.phone || 'N/A' },
               { icon: MapPin, label: 'Address',           value: employee.address      || 'N/A' },
               { icon: Phone,  label: 'Emergency Contact', value: employee.emergencyContact || 'N/A' },
+              {
+                icon: CreditCard,
+                label: 'Payment Method',
+                value: employee.paymentMethodType
+                  ? `${PAYMENT_METHOD_LABELS[employee.paymentMethodType] ?? employee.paymentMethodType}${employee.paymentMethodDetails ? ' — ' + employee.paymentMethodDetails : ''}`
+                  : 'N/A',
+              },
             ].map(({ icon: Icon, label, value }) => (
               <div key={label} className="flex items-center gap-3 p-3 rounded-lg bg-accent/30">
                 <Icon className="w-4 h-4 text-muted-foreground shrink-0" />

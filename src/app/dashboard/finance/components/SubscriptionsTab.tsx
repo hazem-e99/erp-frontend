@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { z } from "zod";
 import api from "@/lib/api";
 import { toast$, financeToast } from "@/lib/toast";
@@ -21,7 +21,15 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { PageLoader } from "@/components/ui/loading";
 import * as Dialog from "@radix-ui/react-dialog";
-import { Plus, X, ChevronRight, FileDown } from "lucide-react";
+import { Plus, X, ChevronRight, FileDown, FileText, Paperclip } from "lucide-react";
+import SubscriptionDocumentsDialog from "./SubscriptionDocumentsDialog";
+import {
+  ALLOWED_DOCUMENT_ACCEPT,
+  MAX_DOCUMENT_BYTES,
+  MAX_DOCUMENTS_PER_SUBSCRIPTION,
+  isAllowedMime,
+  formatFileSize,
+} from "@/lib/subscription-documents";
 import {
   Subscription, PLAN_LABELS, STATUS_VARIANT, fmtCurrency, fmtDate,
   CURRENCY_NAMES, type SupportedCurrency as TSupportedCurrency, FinancePeriodFilters, buildPeriodQuery,
@@ -80,6 +88,9 @@ export default function SubscriptionsTab({ filters: periodFilters }: Subscriptio
   const [rowTotalError, setRowTotalError] = useState<string | null>(null);
   const [clients, setClients] = useState<any[]>([]);
   const [filters, setFilters] = useState<Record<string, any>>({});
+  const [stagedFiles, setStagedFiles] = useState<File[]>([]);
+  const createFileInputRef = useRef<HTMLInputElement>(null);
+  const [documentsForId, setDocumentsForId] = useState<string | null>(null);
   const periodQuery = useMemo(
     () => buildPeriodQuery(periodFilters),
     [periodFilters.preset, periodFilters.month, periodFilters.year, periodFilters.startDate, periodFilters.endDate],
@@ -168,16 +179,69 @@ export default function SubscriptionsTab({ filters: periodFilters }: Subscriptio
         payload.totalPrice = roundCents(rawPrice!);
       }
 
-      await api.post("/finance/subscriptions", payload);
+      const createRes = await api.post("/finance/subscriptions", payload);
+      const newSubId = createRes.data?._id ?? createRes.data?.id;
+      financeToast.subscriptionCreated();
+
+      // Upload any staged documents (subscription is already created — failures here
+      // shouldn't block the success flow, just inform the user).
+      if (stagedFiles.length > 0 && newSubId) {
+        try {
+          const fd = new FormData();
+          stagedFiles.forEach((f) => fd.append("files", f));
+          const upRes = await api.post(
+            `/finance/subscriptions/${newSubId}/documents`,
+            fd,
+            { headers: { "Content-Type": "multipart/form-data" } },
+          );
+          toast$.success(`${upRes.data?.added ?? stagedFiles.length} document(s) uploaded`);
+        } catch (uploadErr: any) {
+          toast$.error(
+            "Subscription created, but documents failed to upload",
+            "You can add them later via the View Documents button.",
+          );
+          console.error(uploadErr);
+        }
+      }
+
       setOpen(false);
       setForm({ ...emptyForm });
       setInstallmentRows([{ amount: "", dueDate: "" }, { amount: "", dueDate: "" }]);
+      setStagedFiles([]);
+      if (createFileInputRef.current) createFileInputRef.current.value = "";
       fetch();
-      financeToast.subscriptionCreated();
     } catch (e: any) {
       toast$.apiError(e);
     }
     setSaving(false);
+  };
+
+  const handleStageFiles = (files: FileList | null) => {
+    if (!files) return;
+    const incoming = Array.from(files);
+
+    if (stagedFiles.length + incoming.length > MAX_DOCUMENTS_PER_SUBSCRIPTION) {
+      toast$.error(
+        `A subscription can have at most ${MAX_DOCUMENTS_PER_SUBSCRIPTION} documents.`,
+      );
+      return;
+    }
+    for (const f of incoming) {
+      if (!isAllowedMime(f.type)) {
+        toast$.error(`File type not allowed: ${f.name}`, `Type: ${f.type || "unknown"}`);
+        return;
+      }
+      if (f.size > MAX_DOCUMENT_BYTES) {
+        toast$.error(`${f.name} exceeds 20 MB`, `Size: ${formatFileSize(f.size)}`);
+        return;
+      }
+    }
+    setStagedFiles((prev) => [...prev, ...incoming]);
+    if (createFileInputRef.current) createFileInputRef.current.value = "";
+  };
+
+  const removeStagedFile = (idx: number) => {
+    setStagedFiles((prev) => prev.filter((_, i) => i !== idx));
   };
 
   const handleCancel = async () => {
@@ -609,6 +673,47 @@ export default function SubscriptionsTab({ filters: periodFilters }: Subscriptio
                   {fieldErrors.description && <p className="text-xs text-destructive mt-1">{fieldErrors.description}</p>}
                 </div>
 
+                {/* Documents (optional, attach now or later) */}
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                    Documents <span className="text-muted-foreground/70">(optional · max {MAX_DOCUMENTS_PER_SUBSCRIPTION} · 20 MB each)</span>
+                  </label>
+                  <input
+                    ref={createFileInputRef}
+                    type="file"
+                    multiple
+                    accept={ALLOWED_DOCUMENT_ACCEPT}
+                    onChange={(e) => handleStageFiles(e.target.files)}
+                    className="block w-full text-xs file:mr-2 file:px-2 file:py-1 file:text-xs file:rounded file:border-0 file:bg-muted file:text-foreground hover:file:bg-muted/80"
+                    disabled={stagedFiles.length >= MAX_DOCUMENTS_PER_SUBSCRIPTION}
+                  />
+                  {stagedFiles.length > 0 && (
+                    <div className="mt-2 space-y-1">
+                      {stagedFiles.map((f, i) => (
+                        <div
+                          key={`${f.name}-${i}`}
+                          className="flex items-center gap-2 text-xs bg-muted/40 rounded px-2 py-1"
+                        >
+                          <Paperclip className="w-3 h-3 text-muted-foreground shrink-0" />
+                          <span className="flex-1 truncate" title={f.name}>{f.name}</span>
+                          <span className="text-muted-foreground shrink-0">{formatFileSize(f.size)}</span>
+                          <button
+                            type="button"
+                            onClick={() => removeStagedFile(i)}
+                            className="text-muted-foreground hover:text-destructive transition-colors shrink-0"
+                            aria-label="Remove file"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <p className="text-[10px] text-muted-foreground mt-1">
+                    PDF, DOCX, XLSX, PPTX, images, TXT, CSV. Stored on Google Drive.
+                  </p>
+                </div>
+
                 {/* Preview */}
                 {(showRows ? rowsTotal > 0 : form.totalPrice) && form.planType && (
                   <div className="rounded-lg bg-muted/50 p-3 text-xs space-y-1 text-muted-foreground">
@@ -712,6 +817,15 @@ export default function SubscriptionsTab({ filters: periodFilters }: Subscriptio
                     <Badge variant={STATUS_VARIANT[s.status]}>{s.status}</Badge>
                   </td>
                   <td className="px-4 py-3 flex gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-xs h-7"
+                      onClick={() => setDocumentsForId(s._id)}
+                    >
+                      <FileText className="w-3.5 h-3.5 mr-1" />
+                      View Documents
+                    </Button>
                     {(s.status === "pending" || s.status === "active") && (
                       <Button
                         variant="ghost"
@@ -763,6 +877,13 @@ export default function SubscriptionsTab({ filters: periodFilters }: Subscriptio
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>
+
+      {/* Documents dialog */}
+      <SubscriptionDocumentsDialog
+        open={!!documentsForId}
+        subscriptionId={documentsForId}
+        onOpenChange={(o) => { if (!o) setDocumentsForId(null); }}
+      />
 
       {/* Delete dialog */}
       <Dialog.Root open={!!deleteId} onOpenChange={(o) => { if (!o) setDeleteId(null); }}>

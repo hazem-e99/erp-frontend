@@ -86,6 +86,7 @@ export default function BackupSettingsPage() {
   const [driveStatus, setDriveStatus] = useState<DriveStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
+  const [jsonExporting, setJsonExporting] = useState(false);
   const [restoreModalOpen, setRestoreModalOpen] = useState(false);
   const [restoreMode, setRestoreMode] = useState<'upload' | 'existing'>('upload');
   const [selectedBackupId, setSelectedBackupId] = useState<string | null>(null);
@@ -155,6 +156,30 @@ export default function BackupSettingsPage() {
       toast.error(err?.response?.data?.message ?? 'Backup failed');
     } finally {
       setExporting(false);
+    }
+  };
+
+  const startJsonExport = async () => {
+    setJsonExporting(true);
+    try {
+      const res = await api.get('/backup/export-json', { responseType: 'blob' });
+      const disposition = (res.headers as any)?.['content-disposition'] as string | undefined;
+      const match = disposition?.match(/filename="?([^"]+)"?/);
+      const filename = match?.[1] ?? `erp-data-${Date.now()}.zip`;
+      const blob = new Blob([res.data], { type: 'application/zip' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast.success('Data export downloaded');
+    } catch (err: any) {
+      toast.error(err?.response?.data?.message ?? 'JSON export failed');
+    } finally {
+      setJsonExporting(false);
     }
   };
 
@@ -379,23 +404,39 @@ export default function BackupSettingsPage() {
         <CardHeader>
           <CardTitle className="text-lg">Actions</CardTitle>
         </CardHeader>
-        <CardContent className="flex flex-wrap gap-3">
-          <Button
-            onClick={startExport}
-            disabled={!canExport || exporting || !driveStatus?.connected}
-            className="gap-2"
-          >
-            <Download className="w-4 h-4" />
-            {exporting ? 'Exporting…' : 'Export Database Now'}
-          </Button>
-          <Button
-            variant="destructive"
-            onClick={openRestoreUpload}
-            disabled={!canImport}
-            className="gap-2"
-          >
-            <Upload className="w-4 h-4" /> Import / Restore Database
-          </Button>
+        <CardContent className="space-y-3">
+          <div className="flex flex-wrap gap-3">
+            <Button
+              onClick={startExport}
+              disabled={!canExport || exporting || !driveStatus?.connected}
+              className="gap-2"
+            >
+              <Download className="w-4 h-4" />
+              {exporting ? 'Exporting…' : 'Export Database Now'}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={startJsonExport}
+              disabled={!canExport || jsonExporting}
+              className="gap-2"
+            >
+              <Download className="w-4 h-4" />
+              {jsonExporting ? 'Preparing…' : 'Download Full Data (JSON)'}
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={openRestoreUpload}
+              disabled={!canImport}
+              className="gap-2"
+            >
+              <Upload className="w-4 h-4" /> Import / Restore Database
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            <strong>Download Full Data (JSON)</strong> is a manual local archive: a ZIP containing one JSON
+            file per collection plus a manifest. Useful for offline inspection — cannot be used to restore
+            the database.
+          </p>
         </CardContent>
       </Card>
 

@@ -32,6 +32,8 @@ export default function EmployeesPage() {
     baseSalary: 0, maxKpi: 0, dateOfJoining: '',
     address: '', emergencyContact: '', whatsappNumber: '',
     positions: [] as string[], departments: [] as string[], contractTypes: [] as string[],
+    paymentMethodType: '' as '' | 'mobile_wallet' | 'visa' | 'bank_account' | 'instapay',
+    paymentMethodDetails: '',
   });
 
   // Departments State
@@ -111,6 +113,8 @@ export default function EmployeesPage() {
       baseSalary: 0, maxKpi: 0, dateOfJoining: '',
       address: '', emergencyContact: '', whatsappNumber: '',
       positions: [], departments: [], contractTypes: [],
+      paymentMethodType: '',
+      paymentMethodDetails: '',
     });
     setEditId(null); setShowForm(false);
   };
@@ -122,6 +126,10 @@ export default function EmployeesPage() {
       payload.age = form.age ? +form.age : undefined;
       payload.baseSalary = +form.baseSalary;
       payload.maxKpi = +form.maxKpi || 0;
+      if (!payload.paymentMethodType) {
+        delete payload.paymentMethodType;
+        delete payload.paymentMethodDetails;
+      }
 
       if (editId) {
         delete payload.password;
@@ -159,6 +167,8 @@ export default function EmployeesPage() {
       positions: emp.positions || [],
       departments: emp.departments || [],
       contractTypes: emp.contractTypes || [],
+      paymentMethodType: emp.paymentMethodType || '',
+      paymentMethodDetails: emp.paymentMethodDetails || '',
     });
     setEditId(emp._id); setShowForm(true);
   };
@@ -453,6 +463,46 @@ export default function EmployeesPage() {
                           placeholder="Select contract types..."
                         />
                       </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <h4 className="text-sm font-medium text-muted-foreground">Payment Method</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <label className="text-sm font-medium">Method</label>
+                        <select
+                          className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                          value={form.paymentMethodType}
+                          onChange={(e) => setForm({ ...form, paymentMethodType: e.target.value as typeof form.paymentMethodType, paymentMethodDetails: '' })}
+                        >
+                          <option value="">— None —</option>
+                          <option value="mobile_wallet">Mobile Wallet</option>
+                          <option value="visa">Visa</option>
+                          <option value="bank_account">Bank Account</option>
+                          <option value="instapay">InstaPay</option>
+                        </select>
+                      </div>
+                      {form.paymentMethodType && (
+                        <div className="space-y-1.5">
+                          <label className="text-sm font-medium">
+                            {form.paymentMethodType === 'mobile_wallet' && 'Wallet Phone Number'}
+                            {form.paymentMethodType === 'visa' && 'Card Number'}
+                            {form.paymentMethodType === 'bank_account' && 'IBAN / Account Number'}
+                            {form.paymentMethodType === 'instapay' && 'InstaPay Handle'}
+                          </label>
+                          <Input
+                            placeholder={
+                              form.paymentMethodType === 'mobile_wallet' ? 'e.g. +20 100 123 4567' :
+                              form.paymentMethodType === 'visa' ? 'e.g. 4111 1111 1111 1111' :
+                              form.paymentMethodType === 'bank_account' ? 'e.g. EG38 0019 0005 0000 0000 1234 5678' :
+                              'e.g. ahmed@instapay'
+                            }
+                            value={form.paymentMethodDetails}
+                            onChange={(e) => setForm({ ...form, paymentMethodDetails: e.target.value })}
+                          />
+                        </div>
+                      )}
                     </div>
                   </div>
 
