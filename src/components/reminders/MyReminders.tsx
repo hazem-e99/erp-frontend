@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { PageLoader, EmptyState } from "@/components/ui/loading";
 import api from "@/lib/api";
 import { toast } from "sonner";
-import {  Bell, Plus, X, Loader2, Calendar, DollarSign, Trash2, Edit, CheckCircle2 } from "lucide-react";
+import {  Bell, Plus, X, Loader2, Calendar, DollarSign, Trash2, Edit, CheckCircle2, RefreshCw } from "lucide-react";
 
 const reminderPeriodOptions = [
   { value: "7days", label: "7 أيام قبل الموعد", icon: "📅" },
@@ -30,6 +30,8 @@ export default function MyReminders() {
     amount: 0,
     reminderDate: "",
     reminderPeriods: [] as string[],
+    isMonthlyRecurring: false,
+    monthlyDay: 1,
   });
 
   const fetchReminders = async () => {
@@ -55,6 +57,8 @@ export default function MyReminders() {
       amount: 0,
       reminderDate: "",
       reminderPeriods: [],
+      isMonthlyRecurring: false,
+      monthlyDay: 1,
     });
     setEditId(null);
     setShowForm(false);
@@ -67,13 +71,24 @@ export default function MyReminders() {
       return;
     }
 
+    if (form.isMonthlyRecurring && (!form.monthlyDay || form.monthlyDay < 1 || form.monthlyDay > 31)) {
+      toast.error("Please select a valid day (1-31) for monthly recurrence");
+      return;
+    }
+
     setSaving(true);
     try {
+      const payload = {
+        ...form,
+        // Only send monthlyDay if recurring is enabled
+        monthlyDay: form.isMonthlyRecurring ? form.monthlyDay : undefined,
+      };
+
       if (editId) {
-        await api.put(`/reminders/${editId}`, form);
+        await api.put(`/reminders/${editId}`, payload);
         toast.success("Reminder updated successfully");
       } else {
-        await api.post("/reminders", form);
+        await api.post("/reminders", payload);
         toast.success("Reminder created successfully");
       }
       resetForm();
@@ -91,6 +106,8 @@ export default function MyReminders() {
       amount: reminder.amount || 0,
       reminderDate: reminder.reminderDate?.split('T')[0] || "",
       reminderPeriods: reminder.reminderPeriods || [],
+      isMonthlyRecurring: reminder.isMonthlyRecurring || false,
+      monthlyDay: reminder.monthlyDay || 1,
     });
     setEditId(reminder._id);
     setShowForm(true);
@@ -257,6 +274,65 @@ export default function MyReminders() {
                 </div>
               </div>
 
+              {/* ─── Monthly Recurring Section ─── */}
+              <div className="space-y-3">
+                <label
+                  className={`flex items-center gap-3 p-4 rounded-lg border-2 cursor-pointer transition-all ${
+                    form.isMonthlyRecurring
+                      ? "border-emerald-500 bg-emerald-500/5"
+                      : "border-input hover:border-emerald-500/50"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={form.isMonthlyRecurring}
+                    onChange={(e) =>
+                      setForm({ ...form, isMonthlyRecurring: e.target.checked })
+                    }
+                    className="accent-emerald-500 w-4 h-4"
+                  />
+                  <RefreshCw className={`w-5 h-5 ${form.isMonthlyRecurring ? "text-emerald-500" : "text-muted-foreground"}`} />
+                  <div className="flex-1">
+                    <span className="text-sm font-semibold">
+                      Repeat Monthly تكرار شهري
+                    </span>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Send email notification every month on a specific day
+                    </p>
+                  </div>
+                </label>
+
+                {form.isMonthlyRecurring && (
+                  <div className="ml-4 p-4 rounded-lg bg-emerald-500/5 border border-emerald-500/20 space-y-3 animate-fade-in">
+                    <label className="text-sm font-medium flex items-center gap-2">
+                      <Calendar className="w-4 h-4 text-emerald-600" />
+                      Day of month يوم التكرار <span className="text-destructive">*</span>
+                    </label>
+                    <div className="flex items-center gap-3">
+                      <select
+                        className="h-10 rounded-lg border border-input bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30 w-24"
+                        value={form.monthlyDay}
+                        onChange={(e) =>
+                          setForm({ ...form, monthlyDay: parseInt(e.target.value) })
+                        }
+                      >
+                        {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => (
+                          <option key={day} value={day}>
+                            {day}
+                          </option>
+                        ))}
+                      </select>
+                      <span className="text-sm text-muted-foreground">
+                        of every month — من كل شهر
+                      </span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      💡 If the month has fewer days (e.g. Feb 28), the reminder will be sent on the last day of that month.
+                    </p>
+                  </div>
+                )}
+              </div>
+
               <div className="flex gap-2 pt-2">
                 <Button type="submit" disabled={saving} className="gap-1">
                   {saving ? (
@@ -297,8 +373,10 @@ export default function MyReminders() {
                 className={`group hover:shadow-md transition-all ${
                   reminder.status === "completed"
                     ? "opacity-60"
-                    : isOverdue && isPending
+                    : isOverdue && isPending && !reminder.isMonthlyRecurring
                     ? "border-destructive/50"
+                    : reminder.isMonthlyRecurring
+                    ? "border-emerald-500/30"
                     : ""
                 }`}
               >
@@ -317,36 +395,54 @@ export default function MyReminders() {
                         </p>
                       )}
                     </div>
-                    <Badge
-                      variant={
-                        reminder.status === "completed"
-                          ? "success"
-                          : isOverdue
-                          ? "destructive"
-                          : "secondary"
-                      }
-                      className="text-xs"
-                    >
-                      {reminder.status === "completed"
-                        ? "Completed"
-                        : isOverdue
-                        ? "Overdue"
-                        : "Pending"}
-                    </Badge>
+                    <div className="flex flex-col items-end gap-1">
+                      <Badge
+                        variant={
+                          reminder.status === "completed"
+                            ? "success"
+                            : isOverdue && !reminder.isMonthlyRecurring
+                            ? "destructive"
+                            : "secondary"
+                        }
+                        className="text-xs"
+                      >
+                        {reminder.status === "completed"
+                          ? "Completed"
+                          : isOverdue && !reminder.isMonthlyRecurring
+                          ? "Overdue"
+                          : "Pending"}
+                      </Badge>
+                      {reminder.isMonthlyRecurring && (
+                        <Badge className="text-xs bg-emerald-500/10 text-emerald-600 border-emerald-500/30 hover:bg-emerald-500/20">
+                          <RefreshCw className="w-3 h-3 mr-1" />
+                          Monthly Day {reminder.monthlyDay}
+                        </Badge>
+                      )}
+                    </div>
                   </div>
 
                   <div className="space-y-2 text-sm">
                     <div className="flex items-center gap-2 text-muted-foreground">
                       <Calendar className="w-4 h-4" />
                       <span>
-                        {new Date(reminder.reminderDate).toLocaleDateString("en-US", {
-                          weekday: "short",
-                          year: "numeric",
-                          month: "short",
-                          day: "numeric",
-                        })}
+                        {reminder.isMonthlyRecurring ? (
+                          <>
+                            Every month on the{" "}
+                            <strong className="text-emerald-600">
+                              {reminder.monthlyDay}
+                              {reminder.monthlyDay === 1 ? "st" : reminder.monthlyDay === 2 ? "nd" : reminder.monthlyDay === 3 ? "rd" : "th"}
+                            </strong>
+                          </>
+                        ) : (
+                          new Date(reminder.reminderDate).toLocaleDateString("en-US", {
+                            weekday: "short",
+                            year: "numeric",
+                            month: "short",
+                            day: "numeric",
+                          })
+                        )}
                       </span>
-                      {isPending && !isOverdue && (
+                      {isPending && !isOverdue && !reminder.isMonthlyRecurring && (
                         <span className="text-primary font-medium">
                           ({daysUntil} days left)
                         </span>
@@ -381,7 +477,7 @@ export default function MyReminders() {
                   </div>
 
                   <div className="flex gap-2 mt-4 opacity-0 group-hover:opacity-100 transition-opacity">
-                    {isPending && (
+                    {isPending && !reminder.isMonthlyRecurring && (
                       <Button
                         size="sm"
                         variant="outline"
