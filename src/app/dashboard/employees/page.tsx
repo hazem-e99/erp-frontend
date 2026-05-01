@@ -557,12 +557,10 @@ export default function EmployeesPage() {
                           disabled={form.currency === BASE_CURRENCY}
                         />
                       </div>
-                      {!editId && (
-                        <div className="space-y-1.5">
-                          <label className="text-sm font-medium">Joining Date <span className="text-destructive">*</span></label>
-                          <Input type="date" value={form.dateOfJoining} onChange={(e) => setForm({...form, dateOfJoining: e.target.value})} required />
-                        </div>
-                      )}
+                      <div className="space-y-1.5">
+                        <label className="text-sm font-medium">Joining Date <span className="text-destructive">*</span></label>
+                        <Input type="date" value={form.dateOfJoining} onChange={(e) => setForm({...form, dateOfJoining: e.target.value})} required />
+                      </div>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="space-y-1.5">

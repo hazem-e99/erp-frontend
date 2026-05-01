@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { PageLoader, EmptyState } from "@/components/ui/loading";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel } from "@/components/ui/alert-dialog";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import api from "@/lib/api";
 import { toast } from "sonner";
 import { DollarSign, Calendar, Upload, Check, Loader2, TrendingUp, TrendingDown, ChevronDown, ChevronUp, Search, Filter, Receipt, Unlink } from "lucide-react";
@@ -20,6 +21,7 @@ interface Employee {
   currency?: string;
   exchangeRate?: number;
   userId: { _id: string; name: string; email: string };
+  contractTypes?: string[];
 }
 
 interface PayrollData {
@@ -47,6 +49,7 @@ export default function PayrollPage() {
   const [payrollData, setPayrollData] = useState<Record<string, PayrollData>>({});
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+  const [payrollTab, setPayrollTab] = useState<'all' | 'internship'>('all');
   const [uploadDialog, setUploadDialog] = useState<{ open: boolean; payrollId: string | null }>({ open: false, payrollId: null });
   const [screenshot, setScreenshot] = useState<File | null>(null);
   const [transactionNumber, setTransactionNumber] = useState("");
@@ -65,6 +68,8 @@ export default function PayrollPage() {
   const [updatingExpense, setUpdatingExpense] = useState(false);
   const [unlinkingExpense, setUnlinkingExpense] = useState(false);
   const [cleaningExpenses, setCleaningExpenses] = useState(false);
+  const [singleExpenseDialog, setSingleExpenseDialog] = useState<{ open: boolean; employeeId: string | null }>({ open: false, employeeId: null });
+  const [singleExpenseDate, setSingleExpenseDate] = useState(new Date().toISOString().split('T')[0]);
 
   const fetchData = async () => {
     setLoading(true);
@@ -271,6 +276,23 @@ export default function PayrollPage() {
     }
   };
 
+  const handleMarkEmployeeAsExpense = async () => {
+    if (!singleExpenseDialog.employeeId) return;
+    try {
+      const response = await api.post('/payroll/mark-as-expense-employee', {
+        employeeId: singleExpenseDialog.employeeId,
+        month: selectedMonth,
+        year: selectedYear,
+        expenseDate: singleExpenseDate,
+      });
+      toast.success(`Recorded salary expense — ${response.data.total.toLocaleString()} ${BASE_CURRENCY}`);
+      setSingleExpenseDialog({ open: false, employeeId: null });
+      fetchData();
+    } catch (e: any) {
+      toast.error(e.response?.data?.message || 'Failed to record employee expense');
+    }
+  };
+
   const handleUnlinkExpense = async () => {
     setUnlinkingExpense(true);
     try {
@@ -349,7 +371,14 @@ export default function PayrollPage() {
   if (loading) return <PageLoader />;
 
   // Filter employees based on search and status
-  const filteredEmployees = employees.filter(emp => {
+  const isInternshipEmployee = (emp: Employee) =>
+    (emp.contractTypes || []).some((ct) => ct.toLowerCase().includes('internship'));
+
+  const visibleEmployees = payrollTab === 'internship'
+    ? employees.filter(isInternshipEmployee)
+    : employees.filter((emp) => !isInternshipEmployee(emp));
+
+  const filteredEmployees = visibleEmployees.filter(emp => {
     // Search filter
     const matchesSearch = searchQuery === "" || 
       emp.userId.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -374,9 +403,9 @@ export default function PayrollPage() {
           <p className="text-sm text-muted-foreground mt-1">Manage employee salaries, bonuses, and commissions</p>
         </div>
         
-        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3">
           {/* Recorded Expense Actions */}
-          {hasRecordedExpense && (
+          {payrollTab === 'all' && hasRecordedExpense && (
             <div className="flex items-center gap-2">
               <Button
                 variant="outline"
@@ -402,6 +431,7 @@ export default function PayrollPage() {
           )}
 
           {/* Clean Old Expenses Button (for fixing issues) */}
+          {payrollTab === 'all' && (
           <Button
             variant="ghost"
             size="sm"
@@ -413,9 +443,10 @@ export default function PayrollPage() {
             {cleaningExpenses ? <Loader2 className="w-4 h-4 animate-spin" /> : <Unlink className="w-4 h-4" />}
             Clean Expenses
           </Button>
+          )}
 
           {/* Mark as Expenses Button */}
-          {pendingExpenses > 0 && (
+          {payrollTab === 'all' && pendingExpenses > 0 && (
             <Button
               variant="default"
               className="gap-2"
@@ -452,7 +483,14 @@ export default function PayrollPage() {
 
       {/* Filters */}
       <Card>
-        <CardContent className="pt-6">
+        <CardContent className="pt-6 space-y-4">
+          <Tabs value={payrollTab} onValueChange={(v) => setPayrollTab(v as 'all' | 'internship')}>
+            <TabsList>
+              <TabsTrigger value="all">All Payroll</TabsTrigger>
+              <TabsTrigger value="internship">Internship Payroll</TabsTrigger>
+            </TabsList>
+          </Tabs>
+
           <div className="flex flex-col md:flex-row gap-4">
             {/* Search */}
             <div className="flex-1 relative">
@@ -484,7 +522,7 @@ export default function PayrollPage() {
             {/* Results Count */}
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <span className="font-medium text-foreground">{filteredEmployees.length}</span>
-              of {employees.length} employees
+              of {visibleEmployees.length} employees
             </div>
           </div>
         </CardContent>
@@ -675,7 +713,7 @@ export default function PayrollPage() {
                       </div>
 
                       {/* Action Buttons */}
-                      <div className="flex gap-2">
+                      <div className="flex gap-2 flex-wrap">
                         {/* Always show Update/Generate button */}
                         <Button
                           size="sm"
@@ -695,6 +733,21 @@ export default function PayrollPage() {
                           >
                             <Check className="w-4 h-4" />
                             Mark Paid
+                          </Button>
+                        )}
+
+                        {payrollTab === 'internship' && existingPayroll?.status === 'paid' && !existingPayroll?.isRecordedAsExpense && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="flex-1 gap-2"
+                            onClick={() => {
+                              setSingleExpenseDate(new Date().toISOString().split('T')[0]);
+                              setSingleExpenseDialog({ open: true, employeeId: emp._id });
+                            }}
+                          >
+                            <Receipt className="w-4 h-4" />
+                            Record Expense
                           </Button>
                         )}
                       </div>
@@ -815,6 +868,43 @@ export default function PayrollPage() {
               ) : (
                 'Confirm & Record'
               )}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Record Single Employee Expense Dialog */}
+      <AlertDialog
+        open={singleExpenseDialog.open}
+        onOpenChange={(open) => setSingleExpenseDialog({ open, employeeId: open ? singleExpenseDialog.employeeId : null })}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <Receipt className="w-5 h-5 text-primary" />
+              Record Employee Salary as Expense
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-4 pt-2">
+                <div>
+                  <label className="text-sm text-muted-foreground block mb-2">Expense Date:</label>
+                  <input
+                    type="date"
+                    value={singleExpenseDate}
+                    onChange={(e) => setSingleExpenseDate(e.target.value)}
+                    className="w-full h-10 rounded-lg border border-input bg-white px-3 text-base text-black cursor-pointer"
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  This will create one expense record for the selected employee only.
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <Button onClick={handleMarkEmployeeAsExpense}>
+              Confirm & Record
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

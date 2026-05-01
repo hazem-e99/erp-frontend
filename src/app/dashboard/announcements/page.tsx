@@ -9,9 +9,10 @@ import { PageLoader, EmptyState } from "@/components/ui/loading";
 import { useAuthStore } from "@/lib/store";
 import api from "@/lib/api";
 import MyReminders from "@/components/reminders/MyReminders";
+import PayrollReminders from "@/components/reminders/PayrollReminders";
 import {
   Megaphone, Plus, X, Loader2, Send, Users, Shield, Building2,
-  FolderKanban, Globe, ChevronDown, BarChart3, Eye, Check, Bell,
+  FolderKanban, Globe, ChevronDown, BarChart3, Eye, Check, Bell, Calendar,
 } from "lucide-react";
 
 const targetTypeLabels: Record<string, { label: string; icon: any; color: string }> = {
@@ -112,6 +113,10 @@ export default function AnnouncementsPage() {
           <TabsTrigger value="reminders">
             <Bell className="w-4 h-4 mr-2" />
             My Reminders
+          </TabsTrigger>
+          <TabsTrigger value="payroll-reminders">
+            <Calendar className="w-4 h-4 mr-2" />
+            Payroll Reminders
           </TabsTrigger>
         </TabsList>
 
@@ -270,6 +275,10 @@ export default function AnnouncementsPage() {
         {/* Reminders Tab */}
         <TabsContent value="reminders">
           <MyReminders />
+        </TabsContent>
+
+        <TabsContent value="payroll-reminders">
+          <PayrollReminders />
         </TabsContent>
       </Tabs>
     </div>
