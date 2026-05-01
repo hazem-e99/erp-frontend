@@ -6,12 +6,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { MultiSelect } from "@/components/ui/multi-select";
 import { PageLoader, EmptyState } from "@/components/ui/loading";
 import api from "@/lib/api";
 import { Plus, Search, Briefcase, X, Loader2, DollarSign, Eye, Mail, Phone, Trash2, Building2, Users, FileText } from "lucide-react";
 import { toast } from "sonner";
-import { SupportedCurrency, BASE_CURRENCY, CURRENCY_NAMES, calculateBaseAmount } from "@/app/dashboard/finance/components/finance.types";
+import { SupportedCurrency, BASE_CURRENCY, CURRENCY_NAMES, calculateBaseAmount, fmtCurrency } from "@/app/dashboard/finance/components/finance.types";
 
 export default function EmployeesPage() {
   const router = useRouter();
@@ -56,6 +57,20 @@ export default function EmployeesPage() {
   const [showCtForm, setShowCtForm] = useState(false);
   const [ctForm, setCtForm] = useState({ name: '', description: '' });
   const [editCtId, setEditCtId] = useState<string | null>(null);
+
+  // Termination Settlement
+  const [settlementOpen, setSettlementOpen] = useState(false);
+  const [terminating, setTerminating] = useState(false);
+  const [terminationEmployee, setTerminationEmployee] = useState<any | null>(null);
+  const [settlementForm, setSettlementForm] = useState({
+    terminationDate: new Date().toISOString().slice(0, 10),
+    lastWorkingDay: new Date().toISOString().slice(0, 10),
+    accruedSalary: "",
+    bonuses: "",
+    deductions: "",
+    otherAdjustments: "",
+    notes: "",
+  });
 
   // Fetch Employees
   const fetchEmployees = async () => {
@@ -173,15 +188,43 @@ export default function EmployeesPage() {
     setEditId(emp._id); setShowForm(true);
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('Terminate this employee?')) return;
+  const openSettlementDialog = (emp: any) => {
+    const today = new Date().toISOString().slice(0, 10);
+    setTerminationEmployee(emp);
+    setSettlementForm({
+      terminationDate: today,
+      lastWorkingDay: today,
+      accruedSalary: emp?.baseSalary ? String(emp.baseSalary) : "",
+      bonuses: "",
+      deductions: "",
+      otherAdjustments: "",
+      notes: "",
+    });
+    setSettlementOpen(true);
+  };
+
+  const handleTerminate = async () => {
+    if (!terminationEmployee) return;
+    setTerminating(true);
     try {
-      await api.delete(`/employees/${id}`);
-      toast.success('Employee terminated');
+      const payload = {
+        terminationDate: settlementForm.terminationDate,
+        lastWorkingDay: settlementForm.lastWorkingDay,
+        accruedSalary: parseFloat(settlementForm.accruedSalary || "0"),
+        bonuses: parseFloat(settlementForm.bonuses || "0"),
+        deductions: parseFloat(settlementForm.deductions || "0"),
+        otherAdjustments: parseFloat(settlementForm.otherAdjustments || "0"),
+        notes: settlementForm.notes,
+      };
+      await api.post(`/employees/${terminationEmployee._id}/terminate`, payload);
+      toast.success('Employee terminated and settlement recorded');
+      setSettlementOpen(false);
+      setTerminationEmployee(null);
       fetchEmployees();
     } catch (e: any) {
-      toast.error(e.response?.data?.message || 'Error deleting employee');
+      toast.error(e.response?.data?.message || 'Error terminating employee');
     }
+    setTerminating(false);
   };
 
   const handlePermanentDelete = async (id: string) => {
@@ -298,6 +341,116 @@ export default function EmployeesPage() {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
+
+        <Dialog open={settlementOpen} onOpenChange={setSettlementOpen}>
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Final Settlement</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="text-sm text-muted-foreground">
+                Employee: <span className="font-medium text-foreground">{terminationEmployee?.name || terminationEmployee?.userId?.name || ""}</span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Termination Date</label>
+                  <Input
+                    type="date"
+                    value={settlementForm.terminationDate}
+                    onChange={(e) => setSettlementForm((f) => ({ ...f, terminationDate: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Last Working Day</label>
+                  <Input
+                    type="date"
+                    value={settlementForm.lastWorkingDay}
+                    onChange={(e) => setSettlementForm((f) => ({ ...f, lastWorkingDay: e.target.value }))}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Accrued Salary</label>
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={settlementForm.accruedSalary}
+                    onChange={(e) => setSettlementForm((f) => ({ ...f, accruedSalary: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Bonuses</label>
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={settlementForm.bonuses}
+                    onChange={(e) => setSettlementForm((f) => ({ ...f, bonuses: e.target.value }))}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Deductions</label>
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={settlementForm.deductions}
+                    onChange={(e) => setSettlementForm((f) => ({ ...f, deductions: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Other Adjustments</label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    value={settlementForm.otherAdjustments}
+                    onChange={(e) => setSettlementForm((f) => ({ ...f, otherAdjustments: e.target.value }))}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">Notes</label>
+                <textarea
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm min-h-[80px]"
+                  value={settlementForm.notes}
+                  onChange={(e) => setSettlementForm((f) => ({ ...f, notes: e.target.value }))}
+                />
+              </div>
+
+              {(() => {
+                const accrued = parseFloat(settlementForm.accruedSalary || "0");
+                const bonuses = parseFloat(settlementForm.bonuses || "0");
+                const deductions = parseFloat(settlementForm.deductions || "0");
+                const adjustments = parseFloat(settlementForm.otherAdjustments || "0");
+                const net = accrued + bonuses - deductions + adjustments;
+                const currency = (terminationEmployee?.currency || BASE_CURRENCY) as SupportedCurrency;
+                return (
+                  <Card className="bg-linear-to-br from-primary-light to-background border-primary/20">
+                    <CardContent className="p-4">
+                      <div className="text-xs text-muted-foreground">Net Settlement</div>
+                      <div className="text-2xl font-semibold text-foreground">{fmtCurrency(net, currency)}</div>
+                    </CardContent>
+                  </Card>
+                );
+              })()}
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setSettlementOpen(false)} disabled={terminating}>Cancel</Button>
+              <Button onClick={handleTerminate} disabled={terminating}>
+                {terminating ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : null}
+                Terminate & Save Settlement
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
         <TabsList>
           <TabsTrigger value="employees"><Users className="w-4 h-4 mr-2" />Employees</TabsTrigger>
           <TabsTrigger value="departments"><Building2 className="w-4 h-4 mr-2" />Departments</TabsTrigger>
@@ -549,7 +702,7 @@ export default function EmployeesPage() {
                     <div className="flex gap-2 mt-4 opacity-0 group-hover:opacity-100 transition-opacity">
                       <Button size="sm" variant="outline" onClick={() => router.push(`/dashboard/employees/${emp._id}`)}><Eye className="w-3 h-3 mr-1" />View</Button>
                       <Button size="sm" variant="outline" onClick={() => handleEdit(emp)}>Edit</Button>
-                      <Button size="sm" variant="ghost" className="text-destructive" onClick={() => handleDelete(emp._id)}>Terminate</Button>
+                      <Button size="sm" variant="ghost" className="text-destructive" onClick={() => openSettlementDialog(emp)}>Terminate</Button>
                       <Button size="sm" variant="destructive" onClick={() => handlePermanentDelete(emp._id)}>Delete User</Button>
                     </div>
                   </CardContent>

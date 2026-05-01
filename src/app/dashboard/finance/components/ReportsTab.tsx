@@ -294,6 +294,13 @@ export default function ReportsTab({ filters }: ReportsTabProps) {
     return "Year To Date";
   })();
 
+  const cashInTotal = cashFlow.reduce((sum, item) => sum + (item.cashIn || 0), 0);
+  const cashOutTotal = cashFlow.reduce((sum, item) => sum + (item.cashOut || 0), 0);
+  const hasCashFlow = cashFlow.length > 0;
+  const displayRevenue = hasCashFlow ? cashInTotal : pnl?.revenue ?? 0;
+  const displayProfit = hasCashFlow ? (cashInTotal - cashOutTotal) : pnl?.profit ?? 0;
+  const displayMargin = displayRevenue > 0 ? parseFloat(((displayProfit / displayRevenue) * 100).toFixed(2)) : 0;
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col lg:flex-row gap-3 lg:items-center lg:justify-between">
@@ -339,15 +346,27 @@ export default function ReportsTab({ filters }: ReportsTabProps) {
 
       {/* P&L Summary Cards */}
       {pnl && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
           <Card className="bg-linear-to-br from-primary-light to-background border-primary/20">
             <CardContent className="p-5">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-xs text-primary mb-1 font-medium">Revenue (Recognized)</p>
-                  <p className="text-2xl font-bold text-foreground">{fmtCurrency(pnl.revenue)}</p>
+                  <p className="text-xs text-primary mb-1 font-medium">Revenue (Cash In)</p>
+                  <p className="text-2xl font-bold text-foreground">{fmtCurrency(displayRevenue)}</p>
                 </div>
                 <DollarSign className="w-8 h-8 text-primary/40" />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-linear-to-br from-muted to-background border-border">
+            <CardContent className="p-5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1 font-medium">Revenue (Recognized)</p>
+                  <p className="text-2xl font-bold text-foreground">{fmtCurrency(pnl.revenue)}</p>
+                </div>
+                <TrendingUp className="w-8 h-8 text-muted-foreground/60" />
               </div>
             </CardContent>
           </Card>
@@ -364,13 +383,13 @@ export default function ReportsTab({ filters }: ReportsTabProps) {
             </CardContent>
           </Card>
 
-          <Card className={`bg-linear-to-br border-2 ${pnl.profit >= 0 ? "from-emerald-50 to-emerald-100 border-emerald-200" : "from-rose-50 to-rose-100 border-rose-200"}`}>
+          <Card className={`bg-linear-to-br border-2 ${displayProfit >= 0 ? "from-emerald-50 to-emerald-100 border-emerald-200" : "from-rose-50 to-rose-100 border-rose-200"}`}>
             <CardContent className="p-5">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className={`text-xs mb-1 font-medium ${pnl.profit >= 0 ? "text-emerald-700" : "text-rose-700"}`}>Net Profit</p>
-                  <p className={`text-2xl font-bold ${pnl.profit >= 0 ? "text-emerald-900" : "text-rose-900"}`}>
-                    {fmtCurrency(pnl.profit)}
+                  <p className={`text-xs mb-1 font-medium ${displayProfit >= 0 ? "text-emerald-700" : "text-rose-700"}`}>Net Profit</p>
+                  <p className={`text-2xl font-bold ${displayProfit >= 0 ? "text-emerald-900" : "text-rose-900"}`}>
+                    {fmtCurrency(displayProfit)}
                   </p>
                 </div>
               </div>
@@ -383,13 +402,13 @@ export default function ReportsTab({ filters }: ReportsTabProps) {
                 <div>
                   <p className="text-xs text-primary mb-1 font-medium">Profit Margin</p>
                   <div className="flex items-center gap-1">
-                    {pnl.margin >= 0 ? (
+                    {displayMargin >= 0 ? (
                       <TrendingUp className="w-4 h-4 text-primary" />
                     ) : (
                       <TrendingDown className="w-4 h-4 text-primary" />
                     )}
                     <p className="text-2xl font-bold text-foreground">
-                      {pnl.margin}%
+                      {displayMargin}%
                     </p>
                   </div>
                 </div>

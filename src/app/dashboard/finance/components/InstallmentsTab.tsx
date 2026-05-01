@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState, useMemo } from "react";
 import api from "@/lib/api";
-import { Card } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { PageLoader } from "@/components/ui/loading";
@@ -78,6 +78,15 @@ export default function InstallmentsTab({ filters: periodFilters }: Installments
     });
   }, [installments, filters]);
 
+  const totalInstallmentsDue = useMemo(
+    () => filteredInstallments.reduce((sum, inst) => {
+      const baseAmount = inst.baseAmount ?? inst.amount ?? 0;
+      const remaining = baseAmount - (inst.paidAmount ?? 0);
+      return sum + (remaining > 0 ? remaining : 0);
+    }, 0),
+    [filteredInstallments],
+  );
+
   const handleDelete = async () => {
     if (!deleteId) return;
 
@@ -134,6 +143,13 @@ export default function InstallmentsTab({ filters: periodFilters }: Installments
         onFilterChange={setFilters}
         onClear={() => setFilters({})}
       />
+
+      <Card className="bg-linear-to-br from-primary-light to-background border-primary/20">
+        <CardContent className="p-4">
+          <div className="text-xs text-muted-foreground">Total Installments Due (Filtered)</div>
+          <div className="text-2xl font-semibold text-foreground">{fmtCurrency(totalInstallmentsDue)}</div>
+        </CardContent>
+      </Card>
 
       {/* Status filter */}
       <div className="flex items-center gap-2 flex-wrap">

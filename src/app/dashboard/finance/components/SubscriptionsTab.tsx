@@ -305,6 +305,11 @@ export default function SubscriptionsTab({ filters: periodFilters }: Subscriptio
     });
   }, [subs, filters]);
 
+  const totalSubscriptionValue = useMemo(
+    () => filteredSubs.reduce((sum, s) => sum + (s.baseTotalPrice ?? s.totalPrice ?? 0), 0),
+    [filteredSubs],
+  );
+
   // Export to Excel function
   const handleExport = async () => {
     await exportToExcel({
@@ -367,6 +372,13 @@ export default function SubscriptionsTab({ filters: periodFilters }: Subscriptio
         onFilterChange={setFilters}
         onClear={() => setFilters({})}
       />
+
+      <Card className="bg-linear-to-br from-primary-light to-background border-primary/20">
+        <CardContent className="p-4">
+          <div className="text-xs text-muted-foreground">Total Subscriptions Value (Filtered)</div>
+          <div className="text-2xl font-semibold text-foreground">{fmtCurrency(totalSubscriptionValue, BASE_CURRENCY)}</div>
+        </CardContent>
+      </Card>
 
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">

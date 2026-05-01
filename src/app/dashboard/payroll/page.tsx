@@ -70,7 +70,7 @@ export default function PayrollPage() {
     setLoading(true);
     try {
       const [eRes, pRes] = await Promise.all([
-        api.get('/employees', { params: { limit: 1000 } }),
+        api.get('/employees', { params: { limit: 1000, status: 'active' } }),
         api.get('/payroll', { params: { month: selectedMonth, year: selectedYear, limit: 1000 } }),
       ]);
 

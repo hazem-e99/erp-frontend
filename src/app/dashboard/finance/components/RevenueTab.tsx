@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState, useMemo } from "react";
 import api from "@/lib/api";
-import { Card } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { PageLoader } from "@/components/ui/loading";
@@ -84,6 +84,11 @@ export default function RevenueTab({ filters: periodFilters }: RevenueTabProps) 
     });
   }, [revenue, filters]);
 
+  const totalRevenue = useMemo(
+    () => filteredRevenue.reduce((sum, rev) => sum + (rev.baseAmount ?? rev.amount ?? 0), 0),
+    [filteredRevenue],
+  );
+
   const handleDelete = async () => {
     if (!deleteId) return;
 
@@ -147,6 +152,13 @@ export default function RevenueTab({ filters: periodFilters }: RevenueTabProps) 
         onFilterChange={setFilters}
         onClear={() => setFilters({})}
       />
+
+      <Card className="bg-linear-to-br from-primary-light to-background border-primary/20">
+        <CardContent className="p-4">
+          <div className="text-xs text-muted-foreground">Total Revenue (Filtered)</div>
+          <div className="text-2xl font-semibold text-foreground">{fmtCurrency(totalRevenue)}</div>
+        </CardContent>
+      </Card>
 
       <div className="flex items-center gap-2 flex-wrap">
         {["all", "pending", "recognized", "cancelled"].map((s) => (

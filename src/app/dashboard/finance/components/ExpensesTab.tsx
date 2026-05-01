@@ -4,7 +4,7 @@ import { z } from "zod";
 import api from "@/lib/api";
 import { toast$, financeToast } from "@/lib/toast";
 import { expenseAmountSchema, roundCents, parseFinancialInput, currencySchema, exchangeRateSchema, calculateBaseAmount, type SupportedCurrency, BASE_CURRENCY } from "@/lib/finance-validation";
-import { Card } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -191,6 +191,11 @@ export default function ExpensesTab({ filters: periodFilters }: ExpensesTabProps
     });
   }, [expenses, filters]);
 
+  const totalExpenses = useMemo(
+    () => filteredExpenses.reduce((sum, expense) => sum + (expense.baseAmount ?? expense.amount ?? 0), 0),
+    [filteredExpenses],
+  );
+
   // Export to Excel function
   const handleExport = async () => {
     await exportToExcel({
@@ -232,6 +237,13 @@ export default function ExpensesTab({ filters: periodFilters }: ExpensesTabProps
         onFilterChange={setFilters}
         onClear={() => setFilters({})}
       />
+
+      <Card className="bg-linear-to-br from-primary-light to-background border-primary/20">
+        <CardContent className="p-4">
+          <div className="text-xs text-muted-foreground">Total Expenses (Filtered)</div>
+          <div className="text-2xl font-semibold text-foreground">{fmtCurrency(totalExpenses)}</div>
+        </CardContent>
+      </Card>
 
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">
