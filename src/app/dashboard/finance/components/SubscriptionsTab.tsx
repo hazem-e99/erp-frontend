@@ -46,6 +46,7 @@ const subscriptionSchema = z.object({
   totalPrice: subscriptionAmountSchema.optional(),
   currency: currencySchema,
   exchangeRate: exchangeRateSchema,
+  gateFeePercentage: z.number().min(0, "Cannot be negative").max(100, "Cannot exceed 100%").optional(),
 }).superRefine((data, ctx) => {
   if (data.installmentPlan === "full") {
     if (data.totalPrice === undefined || data.totalPrice === null) {
@@ -54,6 +55,11 @@ const subscriptionSchema = z.object({
     // subscriptionAmountSchema covers > 0, ≤ 1M, 2-decimal checks already
   }
 });
+
+interface CommissionAssignment {
+  employeeId: string;
+  percentage: string;
+}
 
 const PLAN_MONTHS = { monthly: 1, quarterly: 3, semi_annual: 6 };
 
@@ -67,6 +73,7 @@ const emptyForm = {
   startDate: "",
   installmentPlan: "full",
   description: "",
+  gateFeePercentage: "0",
 };
 
 interface SubscriptionsTabProps {
@@ -87,6 +94,10 @@ export default function SubscriptionsTab({ filters: periodFilters }: Subscriptio
   const [rowErrors, setRowErrors] = useState<Record<number, InstallmentRowError>>({});
   const [rowTotalError, setRowTotalError] = useState<string | null>(null);
   const [clients, setClients] = useState<any[]>([]);
+  const [employees, setEmployees] = useState<any[]>([]);
+  const [commissionRows, setCommissionRows] = useState<CommissionAssignment[]>([]);
+  const [commissionRowErrors, setCommissionRowErrors] = useState<Record<number, { employeeId?: string; percentage?: string }>>({});
+  const [commissionTotalError, setCommissionTotalError] = useState<string | null>(null);
   const [filters, setFilters] = useState<Record<string, any>>({});
   const [stagedFiles, setStagedFiles] = useState<File[]>([]);
   const createFileInputRef = useRef<HTMLInputElement>(null);
@@ -122,6 +133,9 @@ export default function SubscriptionsTab({ filters: periodFilters }: Subscriptio
     api.get("/clients", { params: { limit: 200 } })
       .then((r) => setClients(r.data.data ?? []))
       .catch(() => {});
+    api.get("/employees", { params: { limit: 500, status: "active" } })
+      .then((r) => setEmployees(r.data.data ?? []))
+      .catch(() => {});
   }, []);
 
   useEffect(() => { fetch(); }, [periodQuery]);
@@ -132,10 +146,12 @@ export default function SubscriptionsTab({ filters: periodFilters }: Subscriptio
     // Zod validation for main fields
     const rawPrice = form.totalPrice ? parseFinancialInput(form.totalPrice) : undefined;
     const rawExchangeRate = parseFinancialInput(form.exchangeRate);
+    const rawGateFee = form.gateFeePercentage ? parseFinancialInput(form.gateFeePercentage) : 0;
     const parsed = subscriptionSchema.safeParse({
       ...form,
       totalPrice: rawPrice,
       exchangeRate: rawExchangeRate,
+      gateFeePercentage: isNaN(rawGateFee) ? 0 : rawGateFee,
     });
     if (!parsed.success) {
       const errs: Record<string, string> = {};
@@ -156,6 +172,47 @@ export default function SubscriptionsTab({ filters: periodFilters }: Subscriptio
       setRowTotalError(null);
     }
 
+    // Validate commission rows — store per-row, per-field errors so the UI can highlight them
+    const commissionPayload: { employeeId: string; percentage: number }[] = [];
+    const commissionErrors: Record<number, { employeeId?: string; percentage?: string }> = {};
+    let commissionTotal = 0;
+    for (let i = 0; i < commissionRows.length; i++) {
+      const row = commissionRows[i];
+      const pct = parseFinancialInput(row.percentage);
+      const rowErr: { employeeId?: string; percentage?: string } = {};
+
+      if (!row.employeeId) rowErr.employeeId = "Select an employee";
+      if (!row.percentage || isNaN(pct) || pct <= 0) {
+        rowErr.percentage = "Enter a valid % (> 0)";
+      } else if (pct > 100) {
+        rowErr.percentage = "Cannot exceed 100%";
+      }
+
+      if (rowErr.employeeId || rowErr.percentage) {
+        commissionErrors[i] = rowErr;
+        continue;
+      }
+
+      commissionPayload.push({ employeeId: row.employeeId, percentage: pct });
+      commissionTotal += pct;
+    }
+
+    setCommissionRowErrors(commissionErrors);
+    setCommissionTotalError(null);
+
+    if (Object.keys(commissionErrors).length > 0) {
+      const firstError = Object.values(commissionErrors)[0];
+      const msg = firstError.employeeId ?? firstError.percentage ?? "Fix commission errors before submitting";
+      toast$.error(msg);
+      return;
+    }
+    if (commissionTotal > 100) {
+      const msg = `Total commission percentage (${commissionTotal}%) cannot exceed 100%`;
+      setCommissionTotalError(msg);
+      toast$.error(msg);
+      return;
+    }
+
     setSaving(true);
     try {
       const payload: Record<string, any> = {
@@ -167,7 +224,9 @@ export default function SubscriptionsTab({ filters: periodFilters }: Subscriptio
         startDate: form.startDate,
         installmentPlan: form.installmentPlan,
         description: form.description,
+        gateFeePercentage: isNaN(rawGateFee) ? 0 : rawGateFee,
       };
+      if (commissionPayload.length) payload.commissions = commissionPayload;
 
       if (showRows) {
         payload.installmentItems = installmentRows.map((r) => ({
@@ -207,6 +266,9 @@ export default function SubscriptionsTab({ filters: periodFilters }: Subscriptio
       setOpen(false);
       setForm({ ...emptyForm });
       setInstallmentRows([{ amount: "", dueDate: "" }, { amount: "", dueDate: "" }]);
+      setCommissionRows([]);
+      setCommissionRowErrors({});
+      setCommissionTotalError(null);
       setStagedFiles([]);
       if (createFileInputRef.current) createFileInputRef.current.value = "";
       fetch();
@@ -306,7 +368,11 @@ export default function SubscriptionsTab({ filters: periodFilters }: Subscriptio
   }, [subs, filters]);
 
   const totalSubscriptionValue = useMemo(
-    () => filteredSubs.reduce((sum, s) => sum + (s.baseTotalPrice ?? s.totalPrice ?? 0), 0),
+    () => filteredSubs.reduce((sum, s) => {
+      const base = s.baseTotalPrice ?? s.totalPrice ?? 0;
+      const fee = s.baseGateFeeAmount ?? 0;
+      return sum + (base - fee);
+    }, 0),
     [filteredSubs],
   );
 
@@ -321,20 +387,30 @@ export default function SubscriptionsTab({ filters: periodFilters }: Subscriptio
         { header: 'Plan', key: 'planType', width: 15, format: (v) => PLAN_LABELS[v] || v },
         { header: 'Installments', key: 'installments', width: 15, format: (_, row) => `${row.paidInstallmentsCount || 0}/${row.totalInstallmentsCount || 0}` },
         { header: 'Currency', key: 'currency', width: 10, format: (v) => v || BASE_CURRENCY },
-        { header: 'Total Price (Orig)', key: 'totalPrice', width: 18, format: fmtExcelCurrency },
+        { header: 'Gross (Orig)', key: 'totalPrice', width: 18, format: fmtExcelCurrency },
+        { header: 'Gate Fee %', key: 'gateFeePercentage', width: 12, format: (v) => `${(v ?? 0).toFixed(2)}%` },
+        { header: 'Gate Fee (Orig)', key: 'gateFeeAmount', width: 16, format: (v) => fmtExcelCurrency(v ?? 0) },
+        { header: 'Net (Orig)', key: 'netOrig', width: 18, format: fmtExcelCurrency },
         { header: 'Exchange Rate', key: 'exchangeRate', width: 15, format: (v) => (v ?? 1).toFixed(4) },
-        { header: 'Total Price (Base)', key: 'baseTotalPrice', width: 18, format: (v, row) => fmtExcelCurrency(v ?? row.totalPrice) },
+        { header: 'Net (Base)', key: 'netBase', width: 18, format: fmtExcelCurrency },
         { header: 'Paid Amount (Base)', key: 'paidAmount', width: 18, format: (v) => fmtExcelCurrency(v ?? 0) },
-        { header: 'Remaining (Base)', key: 'remaining', width: 18, format: (_, row) => fmtExcelCurrency((row.baseTotalPrice ?? row.totalPrice) - (row.paidAmount ?? 0)) },
+        { header: 'Remaining (Base)', key: 'remaining', width: 18, format: fmtExcelCurrency },
         { header: 'Start Date', key: 'startDate', width: 15, format: fmtExcelDate },
         { header: 'End Date', key: 'endDate', width: 15, format: fmtExcelDate },
         { header: 'Status', key: 'status', width: 12 },
       ],
-      data: filteredSubs.map(s => ({
-        ...s,
-        installments: `${s.paidInstallmentsCount || 0}/${s.totalInstallmentsCount || 0}`,
-        remaining: (s.baseTotalPrice ?? s.totalPrice) - (s.paidAmount ?? 0),
-      })),
+      data: filteredSubs.map(s => {
+        const baseGross = s.baseTotalPrice ?? s.totalPrice ?? 0;
+        const baseFee = s.baseGateFeeAmount ?? 0;
+        const netBase = baseGross - baseFee;
+        return {
+          ...s,
+          installments: `${s.paidInstallmentsCount || 0}/${s.totalInstallmentsCount || 0}`,
+          netOrig: (s.totalPrice ?? 0) - (s.gateFeeAmount ?? 0),
+          netBase,
+          remaining: netBase - (s.paidAmount ?? 0),
+        };
+      }),
     });
   };
 
@@ -375,7 +451,7 @@ export default function SubscriptionsTab({ filters: periodFilters }: Subscriptio
 
       <Card className="bg-linear-to-br from-primary-light to-background border-primary/20">
         <CardContent className="p-4">
-          <div className="text-xs text-muted-foreground">Total Subscriptions Value (Filtered)</div>
+          <div className="text-xs text-muted-foreground">Total Net Subscriptions Value (after gate fees)</div>
           <div className="text-2xl font-semibold text-foreground">{fmtCurrency(totalSubscriptionValue, BASE_CURRENCY)}</div>
         </CardContent>
       </Card>
@@ -685,6 +761,177 @@ export default function SubscriptionsTab({ filters: periodFilters }: Subscriptio
                   {fieldErrors.description && <p className="text-xs text-destructive mt-1">{fieldErrors.description}</p>}
                 </div>
 
+                {/* Payment Gate Fees */}
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                    Payment Gate Fees (%)
+                    <span className="ml-1 text-muted-foreground/70 font-normal">— deducted from incoming amount</span>
+                  </label>
+                  <Input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.01"
+                    placeholder="0"
+                    value={form.gateFeePercentage}
+                    className={fieldErrors.gateFeePercentage ? "border-destructive" : ""}
+                    onChange={(e) => {
+                      setField("gateFeePercentage", e.target.value);
+                      if (e.target.value !== "") setFieldErrors((fe) => ({ ...fe, gateFeePercentage: "" }));
+                    }}
+                  />
+                  {fieldErrors.gateFeePercentage && (
+                    <p className="text-xs text-destructive mt-1">{fieldErrors.gateFeePercentage}</p>
+                  )}
+                  {(() => {
+                    const total = showRows ? rowsTotal : parseFloat(form.totalPrice || "0");
+                    const fee = parseFloat(form.gateFeePercentage || "0");
+                    if (total > 0 && fee > 0) {
+                      const rate = parseFinancialInput(form.exchangeRate);
+                      const baseTotal = !isNaN(rate) && rate > 0 ? calculateBaseAmount(total, rate) : total;
+                      const baseFee = (baseTotal * fee) / 100;
+                      const baseNet = baseTotal - baseFee;
+                      return (
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Fee: <span className="text-destructive">{fmtCurrency(baseFee, BASE_CURRENCY)}</span>
+                          {" · "}
+                          Net to receive: <span className="text-success font-medium">{fmtCurrency(baseNet, BASE_CURRENCY)}</span>
+                        </p>
+                      );
+                    }
+                  })()}
+                </div>
+
+                {/* Assign Commissions */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-medium text-muted-foreground">
+                      Assign Commissions
+                      <span className="ml-1 text-muted-foreground/70 font-normal">— % of net amount</span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setCommissionRows((r) => [...r, { employeeId: "", percentage: "" }])}
+                      disabled={employees.length === 0 || commissionRows.length >= 20}
+                      className="flex items-center gap-1 text-xs text-primary hover:underline disabled:opacity-40"
+                    >
+                      <Plus className="w-3 h-3" /> Add employee
+                    </button>
+                  </div>
+                  {commissionRows.length === 0 ? (
+                    <p className="text-xs text-muted-foreground/70 italic">No commissions assigned</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {commissionRows.map((row, i) => {
+                        const rowErr = commissionRowErrors[i];
+                        return (
+                          <div key={i} className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              <select
+                                className={`flex-1 h-9 rounded-md border bg-background px-3 text-sm ${
+                                  rowErr?.employeeId ? "border-destructive" : "border-input"
+                                }`}
+                                value={row.employeeId}
+                                onChange={(e) => {
+                                  setCommissionRows((rs) =>
+                                    rs.map((r, idx) => (idx === i ? { ...r, employeeId: e.target.value } : r)),
+                                  );
+                                  if (e.target.value && rowErr?.employeeId) {
+                                    setCommissionRowErrors((errs) => {
+                                      const n = { ...errs };
+                                      if (n[i]) {
+                                        const { employeeId, ...rest } = n[i];
+                                        if (Object.keys(rest).length === 0) delete n[i];
+                                        else n[i] = rest;
+                                      }
+                                      return n;
+                                    });
+                                  }
+                                }}
+                              >
+                                <option value="">Select employee...</option>
+                                {employees.map((emp) => (
+                                  <option key={emp._id} value={emp._id}>
+                                    {emp.userId?.name || emp.name || emp.employeeId}
+                                  </option>
+                                ))}
+                              </select>
+                              <Input
+                                type="number"
+                                min="0.01"
+                                max="100"
+                                step="0.01"
+                                placeholder="%"
+                                value={row.percentage}
+                                className={`w-20 ${rowErr?.percentage ? "border-destructive" : ""}`}
+                                onChange={(e) => {
+                                  setCommissionRows((rs) =>
+                                    rs.map((r, idx) => (idx === i ? { ...r, percentage: e.target.value } : r)),
+                                  );
+                                  if (e.target.value && rowErr?.percentage) {
+                                    setCommissionRowErrors((errs) => {
+                                      const n = { ...errs };
+                                      if (n[i]) {
+                                        const { percentage, ...rest } = n[i];
+                                        if (Object.keys(rest).length === 0) delete n[i];
+                                        else n[i] = rest;
+                                      }
+                                      return n;
+                                    });
+                                  }
+                                }}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setCommissionRows((rs) => rs.filter((_, idx) => idx !== i));
+                                  setCommissionRowErrors((errs) => {
+                                    const n = { ...errs };
+                                    delete n[i];
+                                    return n;
+                                  });
+                                }}
+                                className="text-muted-foreground hover:text-destructive transition-colors shrink-0"
+                                aria-label="Remove"
+                              >
+                                <X className="w-4 h-4" />
+                              </button>
+                            </div>
+                            {(rowErr?.employeeId || rowErr?.percentage) && (
+                              <p className="text-xs text-destructive pl-1">
+                                {rowErr.employeeId ?? rowErr.percentage}
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })}
+                      {(() => {
+                        const total = showRows ? rowsTotal : parseFloat(form.totalPrice || "0");
+                        const fee = parseFloat(form.gateFeePercentage || "0");
+                        const rate = parseFinancialInput(form.exchangeRate);
+                        const baseTotal = !isNaN(rate) && rate > 0 ? calculateBaseAmount(total, rate) : total;
+                        const baseNet = baseTotal - (baseTotal * fee) / 100;
+                        const totalPct = commissionRows.reduce((s, r) => s + (parseFloat(r.percentage) || 0), 0);
+                        const totalCommission = (baseNet * totalPct) / 100;
+                        const overLimit = totalPct > 100 || !!commissionTotalError;
+                        return (
+                          <div className={`rounded-md border px-3 py-2 text-xs ${
+                            overLimit ? "bg-destructive/10 border-destructive/30 text-destructive" : "bg-muted/50 border-border"
+                          }`}>
+                            <div className="flex justify-between">
+                              <span>Total commission %: <strong>{totalPct.toFixed(2)}%</strong></span>
+                              {baseNet > 0 && (
+                                <span>Total: <strong>{fmtCurrency(totalCommission, BASE_CURRENCY)}</strong></span>
+                              )}
+                            </div>
+                            {overLimit && <p className="mt-1">{commissionTotalError ?? "Total cannot exceed 100%"}</p>}
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
+                </div>
+
                 {/* Documents (optional, attach now or later) */}
                 <div>
                   <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
@@ -778,8 +1025,9 @@ export default function SubscriptionsTab({ filters: periodFilters }: Subscriptio
                 <th className="px-4 py-3 font-medium">Customer</th>
                 <th className="px-4 py-3 font-medium">Plan</th>
                 <th className="px-4 py-3 font-medium">Installments</th>
-                <th className="px-4 py-3 font-medium">Total (Orig.)</th>
-                <th className="px-4 py-3 font-medium">Total (Base)</th>
+                <th className="px-4 py-3 font-medium">Gate Fee</th>
+                <th className="px-4 py-3 font-medium">Net (Orig.)</th>
+                <th className="px-4 py-3 font-medium">Net (Base)</th>
                 <th className="px-4 py-3 font-medium">Paid</th>
                 <th className="px-4 py-3 font-medium">Remaining</th>
                 <th className="px-4 py-3 font-medium">Start → End</th>
@@ -790,7 +1038,7 @@ export default function SubscriptionsTab({ filters: periodFilters }: Subscriptio
             <tbody className="divide-y divide-border">
               {filteredSubs.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="px-4 py-8 text-center text-muted-foreground">No subscriptions yet</td>
+                  <td colSpan={11} className="px-4 py-8 text-center text-muted-foreground">No subscriptions yet</td>
                 </tr>
               )}
               {filteredSubs.map((s) => (
@@ -814,14 +1062,31 @@ export default function SubscriptionsTab({ filters: periodFilters }: Subscriptio
                     </div>
                   </td>
                   <td className="px-4 py-3">
-                    <div className="font-medium">{fmtCurrency(s.totalPrice, s.currency ?? BASE_CURRENCY)}</div>
+                    {(s.gateFeePercentage ?? 0) > 0 ? (
+                      <>
+                        <div className="font-medium text-destructive">
+                          {fmtCurrency(s.gateFeeAmount ?? 0, s.currency ?? BASE_CURRENCY)}
+                        </div>
+                        <div className="text-[10px] text-muted-foreground">{(s.gateFeePercentage ?? 0)}%</div>
+                      </>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="font-medium">{fmtCurrency((s.totalPrice ?? 0) - (s.gateFeeAmount ?? 0), s.currency ?? BASE_CURRENCY)}</div>
+                    {(s.gateFeeAmount ?? 0) > 0 && (
+                      <div className="text-[10px] text-muted-foreground">
+                        gross {fmtCurrency(s.totalPrice, s.currency ?? BASE_CURRENCY)}
+                      </div>
+                    )}
                     {s.currency && s.currency !== BASE_CURRENCY && (
                       <div className="text-xs text-muted-foreground">@ {(s.exchangeRate ?? 1).toFixed(4)}</div>
                     )}
                   </td>
-                  <td className="px-4 py-3 font-medium">{fmtCurrency(s.baseTotalPrice ?? s.totalPrice, BASE_CURRENCY)}</td>
+                  <td className="px-4 py-3 font-medium">{fmtCurrency((s.baseTotalPrice ?? s.totalPrice ?? 0) - (s.baseGateFeeAmount ?? 0), BASE_CURRENCY)}</td>
                   <td className="px-4 py-3 text-success">{fmtCurrency(s.paidAmount ?? 0, BASE_CURRENCY)}</td>
-                  <td className="px-4 py-3 text-warning">{fmtCurrency((s.baseTotalPrice ?? s.totalPrice) - (s.paidAmount ?? 0), BASE_CURRENCY)}</td>
+                  <td className="px-4 py-3 text-warning">{fmtCurrency(((s.baseTotalPrice ?? s.totalPrice ?? 0) - (s.baseGateFeeAmount ?? 0)) - (s.paidAmount ?? 0), BASE_CURRENCY)}</td>
                   <td className="px-4 py-3 text-muted-foreground text-xs">
                     {fmtDate(s.startDate)} <ChevronRight className="inline w-3 h-3" /> {fmtDate(s.endDate)}
                   </td>

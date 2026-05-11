@@ -40,6 +40,10 @@ export interface Subscription {
   paidInstallmentsCount?: number;
   totalInstallmentsCount?: number;
   description: string;
+  gateFeePercentage?: number;
+  gateFeeAmount?: number;
+  baseGateFeeAmount?: number;
+  baseNetTotalPrice?: number;
   createdAt: string;
 }
 
@@ -76,6 +80,10 @@ export interface Payment {
   reference?: string;
   notes?: string;
   overpaymentAmount: number;
+  gateFeePercentage?: number;
+  gateFeeAmount?: number;
+  baseGateFeeAmount?: number;
+  baseNetAmount?: number;
   createdAt: string;
 }
 
@@ -200,6 +208,7 @@ export const METHOD_LABELS: Record<string, string> = {
 
 export const CATEGORY_LABELS: Record<string, string> = {
   salaries: "Salaries",
+  commissions: "Commissions",
   ads: "Ads",
   bank_fees: "Bank Fees",
   tools: "Tools",

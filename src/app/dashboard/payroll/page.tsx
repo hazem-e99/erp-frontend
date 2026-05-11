@@ -12,6 +12,7 @@ import api from "@/lib/api";
 import { toast } from "sonner";
 import { DollarSign, Calendar, Upload, Check, Loader2, TrendingUp, TrendingDown, ChevronDown, ChevronUp, Search, Filter, Receipt, Unlink } from "lucide-react";
 import { BASE_CURRENCY } from "@/app/dashboard/finance/components/finance.types";
+import CommissionsTab from "./CommissionsTab";
 
 interface Employee {
   _id: string;
@@ -49,7 +50,7 @@ export default function PayrollPage() {
   const [payrollData, setPayrollData] = useState<Record<string, PayrollData>>({});
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
-  const [payrollTab, setPayrollTab] = useState<'all' | 'internship'>('all');
+  const [payrollTab, setPayrollTab] = useState<'all' | 'internship' | 'commissions'>('all');
   const [uploadDialog, setUploadDialog] = useState<{ open: boolean; payrollId: string | null }>({ open: false, payrollId: null });
   const [screenshot, setScreenshot] = useState<File | null>(null);
   const [transactionNumber, setTransactionNumber] = useState("");
@@ -484,52 +485,57 @@ export default function PayrollPage() {
       {/* Filters */}
       <Card>
         <CardContent className="pt-6 space-y-4">
-          <Tabs value={payrollTab} onValueChange={(v) => setPayrollTab(v as 'all' | 'internship')}>
+          <Tabs value={payrollTab} onValueChange={(v) => setPayrollTab(v as 'all' | 'internship' | 'commissions')}>
             <TabsList>
               <TabsTrigger value="all">All Payroll</TabsTrigger>
               <TabsTrigger value="internship">Internship Payroll</TabsTrigger>
+              <TabsTrigger value="commissions">Commissions</TabsTrigger>
             </TabsList>
           </Tabs>
 
-          <div className="flex flex-col md:flex-row gap-4">
-            {/* Search */}
-            <div className="flex-1 relative">
-              <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search by name or employee ID..."
-                className="pl-10"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-            </div>
+          {payrollTab !== 'commissions' && (
+            <div className="flex flex-col md:flex-row gap-4">
+              {/* Search */}
+              <div className="flex-1 relative">
+                <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search by name or employee ID..."
+                  className="pl-10"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+              </div>
 
-            {/* Status Filter */}
-            <div className="flex items-center gap-2">
-              <Filter className="w-4 h-4 text-muted-foreground" />
-              <select
-                className="h-10 rounded-lg border border-input bg-card px-3 text-sm w-40"
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-              >
-                <option value="all">All Status</option>
-                <option value="no-payroll">No Payroll</option>
-                <option value="draft">Draft</option>
-                <option value="processed">Processed</option>
-                <option value="paid">Paid</option>
-              </select>
-            </div>
+              {/* Status Filter */}
+              <div className="flex items-center gap-2">
+                <Filter className="w-4 h-4 text-muted-foreground" />
+                <select
+                  className="h-10 rounded-lg border border-input bg-card px-3 text-sm w-40"
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value)}
+                >
+                  <option value="all">All Status</option>
+                  <option value="no-payroll">No Payroll</option>
+                  <option value="draft">Draft</option>
+                  <option value="processed">Processed</option>
+                  <option value="paid">Paid</option>
+                </select>
+              </div>
 
-            {/* Results Count */}
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <span className="font-medium text-foreground">{filteredEmployees.length}</span>
-              of {visibleEmployees.length} employees
+              {/* Results Count */}
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <span className="font-medium text-foreground">{filteredEmployees.length}</span>
+                of {visibleEmployees.length} employees
+              </div>
             </div>
-          </div>
+          )}
         </CardContent>
       </Card>
 
+      {payrollTab === 'commissions' && <CommissionsTab />}
+
       {/* Update All Banner */}
-      {dirtyEmployeeIds.length > 0 && (
+      {payrollTab !== 'commissions' && dirtyEmployeeIds.length > 0 && (
         <div className="flex items-center justify-between bg-warning/10 border border-warning/30 rounded-lg px-4 py-3">
           <span className="text-sm font-medium">
             <span className="text-warning font-bold">{dirtyEmployeeIds.length} employee(s)</span> have unsaved changes — total net: <span className="font-bold">${updateAllTotal.toLocaleString()}</span>
@@ -547,7 +553,8 @@ export default function PayrollPage() {
       )}
 
       {/* Employee Payroll Cards */}
-      {filteredEmployees.length === 0 ? (
+      {payrollTab !== 'commissions' && (
+      filteredEmployees.length === 0 ? (
         <EmptyState icon={<DollarSign className="w-12 h-12" />} title="No employees found" />
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -758,6 +765,7 @@ export default function PayrollPage() {
             );
           })}
         </div>
+      )
       )}
 
       {/* Upload Screenshot Dialog */}

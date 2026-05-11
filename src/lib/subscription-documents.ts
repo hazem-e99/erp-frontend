@@ -1,22 +1,11 @@
 /**
- * Subscription document upload constraints. MUST mirror the backend whitelist
- * in subscriptions.service.ts (ALLOWED_DOCUMENT_MIME / MAX_DOCUMENT_BYTES /
- * MAX_DOCUMENTS_PER_SUBSCRIPTION). Files are stored on Google Drive via the
- * existing Backup module's GoogleDriveStorage driver.
+ * Subscription document upload constraints. Files are stored on Google Drive via
+ * the existing Backup module's GoogleDriveStorage driver.
+ *
+ * MIME-type filtering was removed — the backend now accepts any file type and
+ * only enforces the size cap below.
  */
-export const ALLOWED_DOCUMENT_MIME = [
-  "application/pdf",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document", // .docx
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",       // .xlsx
-  "application/vnd.openxmlformats-officedocument.presentationml.presentation", // .pptx
-  "image/png",
-  "image/jpeg",
-  "image/webp",
-  "text/plain",
-  "text/csv",
-] as const;
-
-export const ALLOWED_DOCUMENT_ACCEPT = ALLOWED_DOCUMENT_MIME.join(",");
+export const ALLOWED_DOCUMENT_ACCEPT = "*/*";
 
 export const MAX_DOCUMENT_BYTES = 20 * 1024 * 1024;
 export const MAX_DOCUMENTS_PER_SUBSCRIPTION = 10;
@@ -29,8 +18,12 @@ export interface SubscriptionDocumentMeta {
   uploadedAt: string;
 }
 
-export function isAllowedMime(mime: string): boolean {
-  return (ALLOWED_DOCUMENT_MIME as readonly string[]).includes(mime);
+/**
+ * Kept for backwards compatibility with existing callers — now always returns true
+ * since MIME-type filtering has been removed.
+ */
+export function isAllowedMime(_mime: string): boolean {
+  return true;
 }
 
 export function formatFileSize(bytes: number): string {

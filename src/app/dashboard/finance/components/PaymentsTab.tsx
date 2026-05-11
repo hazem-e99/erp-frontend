@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { PageLoader } from "@/components/ui/loading";
 import * as Dialog from "@radix-ui/react-dialog";
-import { Plus, X, FileDown } from "lucide-react";
+import { Plus, X, FileDown, Pencil, Trash2 } from "lucide-react";
 import { Payment, Installment, METHOD_LABELS, fmtCurrency, fmtDate, CURRENCY_NAMES, type SupportedCurrency as TSupportedCurrency, FinancePeriodFilters, buildPeriodQuery } from "./finance.types";
 import { FilterBar } from "@/components/finance/FilterBar";
 import { exportToExcel, fmtExcelCurrency, fmtExcelDate } from "@/lib/excel-export";
@@ -22,6 +22,7 @@ const paymentSchema = z.object({
   exchangeRate: exchangeRateSchema,
   paymentDate: z.string().min(1, "Payment date is required"),
   method: z.enum(["cash", "bank_transfer", "credit_card", "cheque", "online"]),
+  gateFeePercentage: z.number().min(0, "Cannot be negative").max(100, "Cannot exceed 100%").optional(),
 });
 
 const METHODS = ["cash", "bank_transfer", "credit_card", "cheque", "online"];
@@ -60,6 +61,7 @@ export default function PaymentsTab({ filters: periodFilters }: PaymentsTabProps
     method: "bank_transfer",
     reference: "",
     notes: "",
+    gateFeePercentage: "0",
   });
 
   const emptyForm = {
@@ -74,9 +76,23 @@ export default function PaymentsTab({ filters: periodFilters }: PaymentsTabProps
     method: "bank_transfer",
     reference: "",
     notes: "",
+    gateFeePercentage: "0",
   };
 
   const [filters, setFilters] = useState<Record<string, any>>({});
+
+  // Edit / delete state
+  const [editPayment, setEditPayment] = useState<Payment | null>(null);
+  const [editForm, setEditForm] = useState({
+    paymentDate: "",
+    method: "bank_transfer",
+    reference: "",
+    notes: "",
+    gateFeePercentage: "0",
+  });
+  const [editSaving, setEditSaving] = useState(false);
+  const [deletePayment, setDeletePayment] = useState<Payment | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const fetch = async () => {
     setLoading(true);
@@ -144,15 +160,63 @@ export default function PaymentsTab({ filters: periodFilters }: PaymentsTabProps
     }));
   };
 
+  const openEdit = (p: Payment) => {
+    setEditPayment(p);
+    setEditForm({
+      paymentDate: new Date(p.paymentDate).toISOString().slice(0, 10),
+      method: p.method,
+      reference: p.reference ?? "",
+      notes: p.notes ?? "",
+      gateFeePercentage: String(p.gateFeePercentage ?? 0),
+    });
+  };
+
+  const handleEditSave = async () => {
+    if (!editPayment) return;
+    setEditSaving(true);
+    try {
+      const fee = parseFinancialInput(editForm.gateFeePercentage);
+      await api.put(`/finance/payments/${editPayment._id}`, {
+        paymentDate: editForm.paymentDate,
+        method: editForm.method,
+        reference: editForm.reference,
+        notes: editForm.notes,
+        gateFeePercentage: isNaN(fee) ? 0 : fee,
+      });
+      toast$.success("Payment updated");
+      setEditPayment(null);
+      fetch();
+    } catch (e: any) {
+      toast$.apiError(e);
+    }
+    setEditSaving(false);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deletePayment) return;
+    setDeleting(true);
+    try {
+      await api.delete(`/finance/payments/${deletePayment._id}`);
+      toast$.success("Payment deleted — installment status restored");
+      setDeletePayment(null);
+      fetch();
+    } catch (e: any) {
+      toast$.apiError(e);
+    }
+    setDeleting(false);
+  };
+
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
 
     const parsedAmount = parseFinancialInput(form.amount);
     const parsedExchangeRate = parseFinancialInput(form.exchangeRate);
+    const parsedGateFee = form.gateFeePercentage ? parseFinancialInput(form.gateFeePercentage) : 0;
     const parsed = paymentSchema.safeParse({
       ...form,
       amount: isNaN(parsedAmount) ? undefined : parsedAmount,
       exchangeRate: parsedExchangeRate,
+      gateFeePercentage: isNaN(parsedGateFee) ? 0 : parsedGateFee,
     });
     if (!parsed.success) {
       const errs: Record<string, string> = {};
@@ -168,6 +232,7 @@ export default function PaymentsTab({ filters: periodFilters }: PaymentsTabProps
         ...form,
         amount: roundCents(parsedAmount),
         exchangeRate: Math.round(parsedExchangeRate * 10000) / 10000,
+        gateFeePercentage: isNaN(parsedGateFee) ? 0 : parsedGateFee,
       });
       const overflow: number = res.data?.overflow ?? 0;
       setOpen(false);
@@ -513,6 +578,47 @@ export default function PaymentsTab({ filters: periodFilters }: PaymentsTabProps
                   <Input placeholder="Optional notes" value={form.notes} onChange={(e) => setField("notes", e.target.value)} />
                 </div>
 
+                {/* Payment Gate Fees */}
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                    Payment Gate Fees (%)
+                    <span className="ml-1 text-muted-foreground/70 font-normal">— deducted from incoming amount</span>
+                  </label>
+                  <Input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.01"
+                    placeholder="0"
+                    value={form.gateFeePercentage}
+                    className={fieldErrors.gateFeePercentage ? "border-destructive" : ""}
+                    onChange={(e) => {
+                      setField("gateFeePercentage", e.target.value);
+                      if (e.target.value !== "") setFieldErrors((fe) => ({ ...fe, gateFeePercentage: "" }));
+                    }}
+                  />
+                  {fieldErrors.gateFeePercentage && (
+                    <p className="text-xs text-destructive mt-1">{fieldErrors.gateFeePercentage}</p>
+                  )}
+                  {(() => {
+                    const amount = parseFinancialInput(form.amount);
+                    const fee = parseFloat(form.gateFeePercentage || "0");
+                    if (!isNaN(amount) && amount > 0 && fee > 0) {
+                      const rate = parseFinancialInput(form.exchangeRate);
+                      const baseAmt = !isNaN(rate) && rate > 0 ? calculateBaseAmount(amount, rate) : amount;
+                      const baseFee = (baseAmt * fee) / 100;
+                      const baseNet = baseAmt - baseFee;
+                      return (
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Fee: <span className="text-destructive">{fmtCurrency(baseFee, BASE_CURRENCY)}</span>
+                          {" · "}
+                          Net to receive: <span className="text-success font-medium">{fmtCurrency(baseNet, BASE_CURRENCY)}</span>
+                        </p>
+                      );
+                    }
+                  })()}
+                </div>
+
                 <div className="flex gap-3 pt-2">
                   <Dialog.Close asChild>
                     <Button type="button" variant="ghost" className="flex-1">Cancel</Button>
@@ -540,12 +646,13 @@ export default function PaymentsTab({ filters: periodFilters }: PaymentsTabProps
                 <th className="px-4 py-3 font-medium">Method</th>
                 <th className="px-4 py-3 font-medium">Reference</th>
                 <th className="px-4 py-3 font-medium">Overflow</th>
+                <th className="px-4 py-3 font-medium">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
               {filteredPayments.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">No payments yet</td>
+                  <td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">No payments yet</td>
                 </tr>
               )}
               {filteredPayments.map((p) => (
@@ -568,6 +675,28 @@ export default function PaymentsTab({ filters: periodFilters }: PaymentsTabProps
                       <Badge variant="warning">{fmtCurrency(p.overpaymentAmount, p.currency ?? BASE_CURRENCY)} overflow</Badge>
                     ) : "—"}
                   </td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="w-7 h-7 text-muted-foreground hover:text-primary"
+                        onClick={() => openEdit(p)}
+                        title="Edit payment"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="w-7 h-7 text-muted-foreground hover:text-destructive"
+                        onClick={() => setDeletePayment(p)}
+                        title="Delete payment"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -586,6 +715,149 @@ export default function PaymentsTab({ filters: periodFilters }: PaymentsTabProps
           </div>
         )}
       </Card>
+
+      {/* Edit Payment dialog (metadata only) */}
+      <Dialog.Root open={!!editPayment} onOpenChange={(o) => { if (!o) setEditPayment(null); }}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 bg-black/50 z-50" />
+          <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-md bg-card border border-border rounded-xl shadow-xl p-6 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <Dialog.Title className="text-base font-semibold">Edit Payment</Dialog.Title>
+              <Dialog.Close asChild>
+                <Button variant="ghost" size="icon"><X className="w-4 h-4" /></Button>
+              </Dialog.Close>
+            </div>
+            {editPayment && (
+              <div className="space-y-4">
+                <div className="rounded-md bg-muted/40 px-3 py-2 text-xs space-y-0.5">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Customer:</span>
+                    <span className="font-medium">{editPayment.clientName}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Amount:</span>
+                    <span className="font-medium">
+                      {fmtCurrency(editPayment.amount, editPayment.currency ?? BASE_CURRENCY)}
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground/70 mt-1">
+                    To change the amount, delete this payment and create a new one.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Payment Date</label>
+                  <Input
+                    type="date"
+                    value={editForm.paymentDate}
+                    onChange={(e) => setEditForm((f) => ({ ...f, paymentDate: e.target.value }))}
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Method</label>
+                  <select
+                    className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm"
+                    value={editForm.method}
+                    onChange={(e) => setEditForm((f) => ({ ...f, method: e.target.value }))}
+                  >
+                    {METHODS.map((m) => (
+                      <option key={m} value={m}>{METHOD_LABELS[m]}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Reference</label>
+                  <Input
+                    placeholder="Transaction ref / cheque no."
+                    value={editForm.reference}
+                    onChange={(e) => setEditForm((f) => ({ ...f, reference: e.target.value }))}
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Notes</label>
+                  <Input
+                    placeholder="Optional notes"
+                    value={editForm.notes}
+                    onChange={(e) => setEditForm((f) => ({ ...f, notes: e.target.value }))}
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                    Payment Gate Fees (%)
+                  </label>
+                  <Input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.01"
+                    value={editForm.gateFeePercentage}
+                    onChange={(e) => setEditForm((f) => ({ ...f, gateFeePercentage: e.target.value }))}
+                  />
+                </div>
+
+                <div className="flex gap-3 pt-2">
+                  <Dialog.Close asChild>
+                    <Button type="button" variant="ghost" className="flex-1">Cancel</Button>
+                  </Dialog.Close>
+                  <Button type="button" className="flex-1" onClick={handleEditSave} disabled={editSaving}>
+                    {editSaving ? "Saving..." : "Save Changes"}
+                  </Button>
+                </div>
+              </div>
+            )}
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+
+      {/* Delete confirmation dialog */}
+      <Dialog.Root open={!!deletePayment} onOpenChange={(o) => { if (!o) setDeletePayment(null); }}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 bg-black/50 z-50" />
+          <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-md bg-card border border-border rounded-xl shadow-xl p-6">
+            <Dialog.Title className="text-base font-semibold mb-3 text-destructive">Delete Payment</Dialog.Title>
+            {deletePayment && (
+              <div className="space-y-3 text-sm">
+                <p className="text-muted-foreground">
+                  This will permanently delete the payment and recompute the affected installment and subscription totals.
+                </p>
+                <div className="rounded-md bg-muted/40 px-3 py-2 text-xs space-y-0.5">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Customer:</span>
+                    <span className="font-medium">{deletePayment.clientName}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Amount:</span>
+                    <span className="font-medium text-destructive">
+                      {fmtCurrency(deletePayment.amount, deletePayment.currency ?? BASE_CURRENCY)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Date:</span>
+                    <span>{fmtDate(deletePayment.paymentDate)}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+            <div className="flex gap-3 mt-5">
+              <Dialog.Close asChild>
+                <Button variant="ghost" className="flex-1">Cancel</Button>
+              </Dialog.Close>
+              <Button
+                variant="ghost"
+                className="flex-1 text-destructive hover:text-destructive bg-destructive/10 hover:bg-destructive/20 border border-destructive/30"
+                onClick={handleDeleteConfirm}
+                disabled={deleting}
+              >
+                {deleting ? "Deleting..." : "Delete Permanently"}
+              </Button>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
     </div>
   );
 }

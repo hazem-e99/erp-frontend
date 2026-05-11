@@ -10,19 +10,18 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { PageLoader } from "@/components/ui/loading";
 import * as Dialog from "@radix-ui/react-dialog";
-import { Plus, Trash2, X, Paperclip, FileDown } from "lucide-react";
+import { Plus, Trash2, X, Paperclip, FileDown, Pencil } from "lucide-react";
 import { Expense, CATEGORY_LABELS, fmtCurrency, fmtDate, CURRENCY_NAMES, type SupportedCurrency as TSupportedCurrency, FinancePeriodFilters, buildPeriodQuery } from "./finance.types";
 import { FilterBar } from "@/components/finance/FilterBar";
 import { exportToExcel, fmtExcelCurrency, fmtExcelDate } from "@/lib/excel-export";
 
-const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp", "application/pdf"];
-const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
+const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20 MB
 
 const expenseSchema = z.object({
   amount: expenseAmountSchema,
   currency: currencySchema,
   exchangeRate: exchangeRateSchema,
-  category: z.enum(["salaries", "ads", "bank_fees", "tools", "freelancers", "other"]),
+  category: z.enum(["salaries", "commissions", "ads", "bank_fees", "tools", "freelancers", "other"]),
   date: z.string().min(1, "Date is required"),
   description: z.string().min(3, "Description must be at least 3 characters"),
 });
@@ -44,7 +43,14 @@ export default function ExpensesTab({ filters: periodFilters }: ExpensesTabProps
   const fileRef = useRef<HTMLInputElement>(null);
   const [fileName, setFileName] = useState("");
   const [pendingSalaries, setPendingSalaries] = useState<number>(0);
+  const [receiptPreview, setReceiptPreview] = useState<{ url: string; name: string } | null>(null);
+  const [receiptError, setReceiptError] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [existingAttachmentUrl, setExistingAttachmentUrl] = useState<string>("");
+  const [stagedFile, setStagedFile] = useState<File | null>(null);
+  const [fileError, setFileError] = useState<string>("");
   const LIMIT = 25;
+  const FILE_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api").replace(/\/api\/?$/, "");
   const periodQuery = useMemo(
     () => buildPeriodQuery(periodFilters),
     [periodFilters.preset, periodFilters.month, periodFilters.year, periodFilters.startDate, periodFilters.endDate],
@@ -64,14 +70,19 @@ export default function ExpensesTab({ filters: periodFilters }: ExpensesTabProps
   const fetch = async () => {
     setLoading(true);
     try {
-      const res = await api.get("/finance/expenses", { params: { page, limit: LIMIT, ...periodQuery } });
+      // Pull the whole period so totals + filters work over all rows.
+      // Client-side pagination is applied below.
+      const res = await api.get("/finance/expenses", { params: { page: 1, limit: 5000, ...periodQuery } });
       setExpenses(res.data.data ?? []);
       setTotal(res.data.total ?? 0);
     } catch (e) { console.error(e); }
     setLoading(false);
   };
 
-  useEffect(() => { fetch(); }, [page, periodQuery]);
+  useEffect(() => { fetch(); }, [periodQuery]);
+
+  // Reset to page 1 whenever filters or the underlying dataset change.
+  useEffect(() => { setPage(1); }, [filters, expenses]);
 
   // Fetch pending salaries when category is "salaries"
   useEffect(() => {
@@ -90,8 +101,95 @@ export default function ExpensesTab({ filters: periodFilters }: ExpensesTabProps
 
   const setField = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
 
+  /**
+   * Validates a selected file. Runs sync size check immediately and, for image
+   * MIME types, performs an async decode to catch corrupted images. Stores the
+   * file in `stagedFile` when valid; otherwise sets `fileError` and clears it.
+   */
+  const validateAndStageFile = (file: File | null) => {
+    setFileError("");
+    setStagedFile(null);
+    setFileName("");
+
+    if (!file) return;
+
+    if (file.size === 0) {
+      setFileError("File is empty (0 bytes). Please choose a different file.");
+      if (fileRef.current) fileRef.current.value = "";
+      return;
+    }
+    if (file.size > MAX_FILE_SIZE) {
+      setFileError(`File is ${(file.size / (1024 * 1024)).toFixed(2)} MB — exceeds the 20 MB limit.`);
+      if (fileRef.current) fileRef.current.value = "";
+      return;
+    }
+
+    setFileName(file.name);
+
+    // For images, verify the bytes actually decode as a valid image so we never
+    // store a corrupted upload.
+    if (file.type.startsWith("image/")) {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        setStagedFile(file);
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        setFileError("This image appears to be corrupted or not a valid image file.");
+        setFileName("");
+        setStagedFile(null);
+        if (fileRef.current) fileRef.current.value = "";
+      };
+      img.src = url;
+      return;
+    }
+
+    setStagedFile(file);
+  };
+
+  const resetForm = () => {
+    setForm({
+      amount: "",
+      currency: BASE_CURRENCY as string,
+      exchangeRate: "1",
+      category: "other",
+      date: new Date().toISOString().slice(0, 10),
+      description: "",
+    });
+    setFileName("");
+    setStagedFile(null);
+    setFileError("");
+    setExistingAttachmentUrl("");
+    setEditingId(null);
+    setFieldErrors({});
+    if (fileRef.current) fileRef.current.value = "";
+  };
+
+  const openEdit = (exp: Expense) => {
+    resetForm();
+    setEditingId(exp._id);
+    setForm({
+      amount: String(exp.amount),
+      currency: exp.currency ?? (BASE_CURRENCY as string),
+      exchangeRate: String(exp.exchangeRate ?? 1),
+      category: exp.category,
+      date: new Date(exp.date).toISOString().slice(0, 10),
+      description: exp.description ?? "",
+    });
+    setExistingAttachmentUrl(exp.attachmentUrl ?? "");
+    setOpen(true);
+  };
+
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Refuse to submit while there's an active file error — the user must fix it first.
+    if (fileError) {
+      toast$.warning(fileError);
+      return;
+    }
 
     const parsedAmount = parseFinancialInput(form.amount);
     const parsedExchangeRate = parseFinancialInput(form.exchangeRate);
@@ -108,19 +206,6 @@ export default function ExpensesTab({ filters: periodFilters }: ExpensesTabProps
     }
     setFieldErrors({});
 
-    // File validation
-    const file = fileRef.current?.files?.[0];
-    if (file) {
-      if (!ALLOWED_TYPES.includes(file.type)) {
-        toast$.warning("Only JPEG, PNG, WebP and PDF files are allowed.");
-        return;
-      }
-      if (file.size > MAX_FILE_SIZE) {
-        toast$.warning("File must be under 5 MB.");
-        return;
-      }
-    }
-
     setSaving(true);
     try {
       const fd = new FormData();
@@ -131,16 +216,23 @@ export default function ExpensesTab({ filters: periodFilters }: ExpensesTabProps
       fd.append("category", form.category);
       fd.append("date", form.date);
       fd.append("description", form.description);
-      if (file) fd.append("attachment", file);
-      await api.post("/finance/expenses", fd, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
+      if (stagedFile) fd.append("attachment", stagedFile);
+
+      if (editingId) {
+        await api.put(`/finance/expenses/${editingId}`, fd, {
+          headers: { "Content-Type": "multipart/form-data" },
+        });
+        toast$.success("Expense updated");
+      } else {
+        await api.post("/finance/expenses", fd, {
+          headers: { "Content-Type": "multipart/form-data" },
+        });
+        financeToast.expenseAdded();
+      }
+
       setOpen(false);
-      setForm({ amount: "", currency: BASE_CURRENCY as string, exchangeRate: "1", category: "other", date: new Date().toISOString().slice(0, 10), description: "" });
-      setFileName("");
-      if (fileRef.current) fileRef.current.value = "";
+      resetForm();
       fetch();
-      financeToast.expenseAdded();
     } catch (e) {
       toast$.apiError(e);
     }
@@ -196,6 +288,13 @@ export default function ExpensesTab({ filters: periodFilters }: ExpensesTabProps
     [filteredExpenses],
   );
 
+  // Client-side pagination over filtered results — keeps the summary card consistent.
+  const pagedExpenses = useMemo(
+    () => filteredExpenses.slice((page - 1) * LIMIT, page * LIMIT),
+    [filteredExpenses, page],
+  );
+  const filteredCount = filteredExpenses.length;
+
   // Export to Excel function
   const handleExport = async () => {
     await exportToExcel({
@@ -247,7 +346,7 @@ export default function ExpensesTab({ filters: periodFilters }: ExpensesTabProps
 
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">
-          {filteredExpenses.length} {filteredExpenses.length === total ? 'total' : `of ${total}`} expenses
+          {filteredCount} {filteredCount === total ? 'total' : `of ${total}`} expenses
         </p>
         <div className="flex gap-2">
           <Button
@@ -259,15 +358,15 @@ export default function ExpensesTab({ filters: periodFilters }: ExpensesTabProps
             <FileDown className="w-4 h-4 mr-1" />
             Export to Excel
           </Button>
-          <Dialog.Root open={open} onOpenChange={setOpen}>
+          <Dialog.Root open={open} onOpenChange={(o) => { setOpen(o); if (!o) resetForm(); }}>
           <Dialog.Trigger asChild>
-            <Button size="sm"><Plus className="w-4 h-4 mr-1" />Add Expense</Button>
+            <Button size="sm" onClick={() => resetForm()}><Plus className="w-4 h-4 mr-1" />Add Expense</Button>
           </Dialog.Trigger>
           <Dialog.Portal>
             <Dialog.Overlay className="fixed inset-0 bg-black/50 z-50" />
             <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-md bg-card border border-border rounded-xl shadow-xl p-6 max-h-[90vh] overflow-y-auto">
               <div className="flex items-center justify-between mb-5">
-                <Dialog.Title className="text-base font-semibold">Add Expense</Dialog.Title>
+                <Dialog.Title className="text-base font-semibold">{editingId ? "Edit Expense" : "Add Expense"}</Dialog.Title>
                 <Dialog.Close asChild>
                   <Button variant="ghost" size="icon"><X className="w-4 h-4" /></Button>
                 </Dialog.Close>
@@ -391,26 +490,42 @@ export default function ExpensesTab({ filters: periodFilters }: ExpensesTabProps
                   <button
                     type="button"
                     onClick={() => fileRef.current?.click()}
-                    className="flex items-center gap-2 text-xs text-muted-foreground border border-dashed border-border rounded-md px-3 py-2 hover:border-primary/50 transition-colors w-full"
+                    className={`flex items-center gap-2 text-xs border border-dashed rounded-md px-3 py-2 transition-colors w-full ${
+                      fileError
+                        ? "border-destructive text-destructive hover:border-destructive/70"
+                        : "border-border text-muted-foreground hover:border-primary/50"
+                    }`}
                   >
                     <Paperclip className="w-3.5 h-3.5" />
-                    {fileName || "Upload receipt (PDF / image, max 5MB)"}
+                    {fileName || (editingId && existingAttachmentUrl ? "Replace existing receipt (any file, max 20MB)" : "Upload receipt (any file, max 20MB)")}
                   </button>
                   <input
                     ref={fileRef}
                     type="file"
-                    accept=".pdf,.jpg,.jpeg,.png,.webp"
                     className="hidden"
-                    onChange={(e) => setFileName(e.target.files?.[0]?.name ?? "")}
+                    onChange={(e) => validateAndStageFile(e.target.files?.[0] ?? null)}
                   />
+                  {fileError && (
+                    <p className="text-xs text-destructive mt-1">{fileError}</p>
+                  )}
+                  {!fileError && stagedFile && (
+                    <p className="text-xs text-success mt-1">
+                      ✓ {stagedFile.name} ({(stagedFile.size / 1024).toFixed(1)} KB) — ready to upload
+                    </p>
+                  )}
+                  {!fileError && !stagedFile && editingId && existingAttachmentUrl && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Current receipt will be kept. Choose a new file to replace it.
+                    </p>
+                  )}
                 </div>
 
                 <div className="flex gap-3 pt-2">
                   <Dialog.Close asChild>
                     <Button type="button" variant="ghost" className="flex-1">Cancel</Button>
                   </Dialog.Close>
-                  <Button type="submit" className="flex-1" disabled={saving}>
-                    {saving ? "Saving..." : "Add Expense"}
+                  <Button type="submit" className="flex-1" disabled={saving || !!fileError}>
+                    {saving ? "Saving..." : editingId ? "Save Changes" : "Add Expense"}
                   </Button>
                 </div>
               </form>
@@ -435,12 +550,12 @@ export default function ExpensesTab({ filters: periodFilters }: ExpensesTabProps
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {filteredExpenses.length === 0 && (
+              {pagedExpenses.length === 0 && (
                 <tr>
                   <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">No expenses recorded</td>
                 </tr>
               )}
-              {filteredExpenses.map((exp) => (
+              {pagedExpenses.map((exp) => (
                 <tr key={exp._id} className="hover:bg-muted/30 transition-colors">
                   <td className="px-4 py-3">
                     <div className="font-medium text-destructive">{fmtCurrency(exp.amount, exp.currency ?? BASE_CURRENCY)}</div>
@@ -456,25 +571,43 @@ export default function ExpensesTab({ filters: periodFilters }: ExpensesTabProps
                   <td className="px-4 py-3 max-w-xs truncate">{exp.description}</td>
                   <td className="px-4 py-3">
                     {exp.attachmentUrl ? (
-                      <a
-                        href={`${process.env.NEXT_PUBLIC_API_URL?.replace("/api", "")}${exp.attachmentUrl}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const url = exp.attachmentUrl as string;
+                          setReceiptError(false);
+                          setReceiptPreview({
+                            url: `${FILE_BASE}${url}`,
+                            name: url.split("/").pop() ?? "receipt",
+                          });
+                        }}
                         className="text-primary text-xs hover:underline flex items-center gap-1"
                       >
                         <Paperclip className="w-3 h-3" /> View
-                      </a>
+                      </button>
                     ) : "—"}
                   </td>
                   <td className="px-4 py-3">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="w-7 h-7 text-muted-foreground hover:text-destructive"
-                      onClick={() => handleDelete(exp._id)}
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </Button>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="w-7 h-7 text-muted-foreground hover:text-primary"
+                        onClick={() => openEdit(exp)}
+                        title="Edit expense"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="w-7 h-7 text-muted-foreground hover:text-destructive"
+                        onClick={() => handleDelete(exp._id)}
+                        title="Delete expense"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -482,18 +615,71 @@ export default function ExpensesTab({ filters: periodFilters }: ExpensesTabProps
           </table>
         </div>
 
-        {total > LIMIT && (
+        {filteredCount > LIMIT && (
           <div className="flex items-center justify-between px-4 py-3 border-t border-border text-sm">
             <span className="text-muted-foreground">
-              {(page - 1) * LIMIT + 1}–{Math.min(page * LIMIT, total)} of {total}
+              {(page - 1) * LIMIT + 1}–{Math.min(page * LIMIT, filteredCount)} of {filteredCount}
             </span>
             <div className="flex gap-2">
               <Button variant="ghost" size="sm" disabled={page === 1} onClick={() => setPage((p) => p - 1)}>Previous</Button>
-              <Button variant="ghost" size="sm" disabled={page * LIMIT >= total} onClick={() => setPage((p) => p + 1)}>Next</Button>
+              <Button variant="ghost" size="sm" disabled={page * LIMIT >= filteredCount} onClick={() => setPage((p) => p + 1)}>Next</Button>
             </div>
           </div>
         )}
       </Card>
+
+      {/* Receipt preview dialog */}
+      <Dialog.Root open={!!receiptPreview} onOpenChange={(o) => { if (!o) { setReceiptPreview(null); setReceiptError(false); } }}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 bg-black/70 z-50" />
+          <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-3xl bg-card border border-border rounded-xl shadow-xl p-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-3">
+              <Dialog.Title className="text-sm font-semibold flex items-center gap-2">
+                <Paperclip className="w-4 h-4" />
+                {receiptPreview?.name}
+              </Dialog.Title>
+              <div className="flex items-center gap-2">
+                {receiptPreview && !receiptError && (
+                  <a
+                    href={receiptPreview.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-primary hover:underline"
+                  >
+                    Open in new tab
+                  </a>
+                )}
+                <Dialog.Close asChild>
+                  <Button variant="ghost" size="icon"><X className="w-4 h-4" /></Button>
+                </Dialog.Close>
+              </div>
+            </div>
+            {receiptPreview && (
+              receiptError ? (
+                <div className="py-12 text-center space-y-2">
+                  <p className="text-sm font-medium text-destructive">Receipt file no longer available</p>
+                  <p className="text-xs text-muted-foreground">
+                    The file was deleted from the server. The expense record still exists, but the attached receipt is missing.
+                  </p>
+                </div>
+              ) : receiptPreview.url.toLowerCase().endsWith(".pdf") ? (
+                <iframe
+                  src={receiptPreview.url}
+                  className="w-full h-[70vh] rounded border border-border"
+                  onError={() => setReceiptError(true)}
+                />
+              ) : (
+                <img
+                  src={receiptPreview.url}
+                  alt="receipt"
+                  className="w-full max-h-[75vh] object-contain rounded border border-border bg-muted/20"
+                  onError={() => setReceiptError(true)}
+                />
+              )
+            )}
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
     </div>
   );
 }
