@@ -2,7 +2,7 @@
 import { useEffect, useState, useMemo, useRef } from "react";
 import { z } from "zod";
 import api from "@/lib/api";
-import { toast$, financeToast } from "@/lib/toast";
+import { parseApiError, toast$, financeToast } from "@/lib/toast";
 import {
   subscriptionAmountSchema,
   validateInstallmentRows,
@@ -255,9 +255,12 @@ export default function SubscriptionsTab({ filters: periodFilters }: Subscriptio
           );
           toast$.success(`${upRes.data?.added ?? stagedFiles.length} document(s) uploaded`);
         } catch (uploadErr: any) {
+          const { message, code } = parseApiError(uploadErr);
           toast$.error(
             "Subscription created, but documents failed to upload",
-            "You can add them later via the View Documents button.",
+            code === "GOOGLE_DRIVE_RECONNECT_REQUIRED"
+              ? `${message} You can add the documents later via the View Documents button.`
+              : message,
           );
           console.error(uploadErr);
         }

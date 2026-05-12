@@ -131,13 +131,23 @@ export default function BackupSettingsPage() {
   // Handle OAuth redirect flash messages
   useEffect(() => {
     const google = searchParams.get('google');
-    const message = searchParams.get('message');
+    const reason = searchParams.get('reason');
     if (google === 'success') {
-      toast.success(message || 'Google Drive connected');
+      toast.success('Google Drive connected successfully');
       router.replace('/dashboard/settings/backup');
       fetchAll();
     } else if (google === 'error') {
-      toast.error(message || 'Google Drive connection failed');
+      const reasonMessages: Record<string, string> = {
+        google_denied: 'Access denied by Google',
+        missing_params: 'OAuth callback is missing required parameters',
+        invalid_state: 'OAuth state expired or invalid — please try again',
+        state_mismatch: 'OAuth state mismatch — please try again',
+        unauthorized: 'Your account is not authorized for this action',
+        forbidden: 'You do not have permission to connect Google Drive',
+        oauth_failed: 'Google Drive connection failed — please try again',
+      };
+      const msg = (reason && reasonMessages[reason]) || 'Google Drive connection failed';
+      toast.error(msg);
       router.replace('/dashboard/settings/backup');
     }
   }, [searchParams, router, fetchAll]);
